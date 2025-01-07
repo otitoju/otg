@@ -23,6 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import axios from 'axios';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { io, Socket } from 'socket.io-client';
 
 // Import SVG icons
 import Arrow from '../../assets/images/Communities/arrow-right.svg';
@@ -31,6 +32,12 @@ import Camera from '../../assets/images/Communities/Camera.svg';
 import Doc from '../../assets/images/Communities/docs.svg';
 
 // Types
+// Add socket-related types
+interface TypingUser {
+  user_id: string;
+  username?: string;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -80,7 +87,7 @@ const SidePanel: React.FC<{
   const handleLeaveGroup = async () => {
     try {
       console.log('Initiating leave group process...');
-      
+
       // Validate user ID
       const userId = await AsyncStorage.getItem('user');
       if (!userId) {
@@ -96,7 +103,7 @@ const SidePanel: React.FC<{
         return;
       }
       console.log(`User ID retrieved: ${userIdValue}`);
-      
+
       // Validate room ID
       const roomId = roomDetails?.id;
       if (!roomId) {
@@ -105,11 +112,11 @@ const SidePanel: React.FC<{
         return;
       }
       console.log(`Room ID: ${roomId}`);
-  
+
       // Log request data
       const requestData = { room_id: roomId, user_id: userIdValue };
       console.log('Request Data:', requestData);
-  
+
       // Make DELETE request
       const response = await axios.delete(
         'https://api.onthegoafrica.com/api/v1/chat/room/member/remove',
@@ -120,7 +127,7 @@ const SidePanel: React.FC<{
           },
         }
       );
-  
+
       if (response.status === 200) {
         console.log('Leave group successful:', response.data);
         Alert.alert('Success', 'You have successfully left the group.');
@@ -140,8 +147,8 @@ const SidePanel: React.FC<{
       }
     }
   };
-  
-  
+
+
 
   const renderMember = ({ item }: { item: RoomUser }) => (
     <View style={styles.memberItem}>
@@ -221,8 +228,91 @@ const ChatScreen: React.FC = () => {
   const [sidePanelVisible, setSidePanelVisible] = useState(false);
   const [roomUsers, setRoomUsers] = useState<RoomUsers | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
 
   const { roomId } = route.params as { roomId: string };
+
+  // Initialize socket connection
+  useEffect(() => {
+    if (senderId) {
+      // Initialize socket
+      const newSocket = io('https://api.onthegoafrica.com', {
+        transports: ['websocket'],
+        query: {
+          userId: senderId
+        }
+      });
+
+      // Socket connection events
+      newSocket.on('connect', () => {
+        console.log('Socket connected');
+        // Join the room
+        newSocket.emit('join_room', { room_id: roomId, user_id: senderId });
+      });
+
+      newSocket.on('connect_error', (error) => {
+        console.error('Socket connection error:', error);
+        setError('Failed to connect to chat server');
+      });
+
+      // Handle incoming messages
+      newSocket.on('new_message', (message) => {
+        const formattedMessage: Message = {
+          id: message.id.toString(),
+          content: message.content,
+          sender: parseInt(message.sender_id) === parseInt(senderId) ? 'user' : 'other',
+          timestamp: new Date(message.timestamp).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit'
+          }).toLowerCase(),
+          type: message.media_url ? 'image' : 'text',
+          fileUrl: message.media_url,
+          fileName: message.media_url?.split('/').pop(),
+          senderAvatar: parseInt(message.sender_id) === parseInt(senderId) ? null : message.sender_avatar,
+        };
+
+        setMessages(prev => [...prev, formattedMessage]);
+        // Scroll to bottom when new message arrives
+        flatListRef.current?.scrollToEnd({ animated: true });
+      });
+
+      // Handle typing indicators
+      newSocket.on('user_typing', ({ user_id }) => {
+        setTypingUsers(prev => {
+          if (!prev.find(user => user.user_id === user_id)) {
+            return [...prev, { user_id }];
+          }
+          return prev;
+        });
+      });
+
+      newSocket.on('user_stopped_typing', ({ user_id }) => {
+        setTypingUsers(prev => prev.filter(user => user.user_id !== user_id));
+      });
+
+      // Handle message status updates
+      newSocket.on('message_status_update', ({ message_id, status }) => {
+        setMessages(prev => prev.map(msg =>
+          msg.id === message_id ? { ...msg, status } : msg
+        ));
+      });
+
+      // Store socket instance
+      setSocket(newSocket);
+
+      // Cleanup on unmount
+      return () => {
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+        }
+        newSocket.emit('leave_room', { room_id: roomId, user_id: senderId });
+        newSocket.disconnect();
+      };
+    }
+  }, [senderId, roomId]);
 
   useEffect(() => {
     const fetchUserId = async () => {
@@ -334,11 +424,20 @@ const ChatScreen: React.FC = () => {
 
   const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
-    if (!senderId) {
-      setError('Please log in to send messages');
+    if (!senderId || !socket) {
+      setError('Unable to send message');
       return;
     }
 
+    const messageData = {
+      room_id: roomId,
+      sender_id: senderId,
+      content: type === 'text' ? inputText.trim() : '',
+      media_url: type !== 'text' ? content.uri : null,
+      timestamp: new Date().toISOString()
+    };
+
+    // Optimistically add message to UI
     const newMessage: Message = {
       id: Date.now().toString(),
       sender: 'user',
@@ -356,18 +455,25 @@ const ChatScreen: React.FC = () => {
     setInputText('');
     Keyboard.dismiss();
 
-    try {
-      await axios.post(`${API_BASE_URL}/chat/message/send`, {
-        room_id: roomId,
-        sender_id: senderId,
-        content: newMessage.content || newMessage.fileUrl || newMessage.fileName,
-        media_url: newMessage.fileUrl || null,
-      });
-    } catch (error) {
-      console.error('Error sending message:', error);
-      setMessages(prev => prev.filter(msg => msg.id !== newMessage.id));
-      setError('Failed to send message');
+    // Emit message through socket
+    socket.emit('send_message', messageData);
+  };
+
+  // Handle typing indicator
+  const handleTyping = () => {
+    if (!socket || !senderId) return;
+
+    socket.emit('typing_start', { room_id: roomId, user_id: senderId });
+
+    // Clear existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
+
+    // Set new timeout
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('typing_end', { room_id: roomId, user_id: senderId });
+    }, 1500);
   };
 
   const selectImage = async () => {
@@ -431,6 +537,55 @@ const ChatScreen: React.FC = () => {
       </TouchableOpacity>
     </View>
   );
+
+  // Modify TextInput to handle typing
+  const renderInput = () => (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.inputContainer}
+    >
+      <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
+        <Plus width={24} height={24} fill={COLORS.primary} />
+      </TouchableOpacity>
+      <TextInput
+        style={styles.input}
+        value={inputText}
+        onChangeText={(text) => {
+          setInputText(text);
+          handleTyping();
+        }}
+        placeholder="Type a message"
+        placeholderTextColor={COLORS.textPlaceholder}
+      />
+      <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
+        <Camera width={24} height={24} fill={COLORS.white} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => sendMessage('text')}
+        style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+        disabled={!inputText.trim()}
+      >
+        <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
+          Send
+        </Text>
+      </TouchableOpacity>
+    </KeyboardAvoidingView>
+  );
+
+    // Add typing indicator component
+    const renderTypingIndicator = () => {
+      if (typingUsers.length === 0) return null;
+  
+      return (
+        <View style={styles.typingIndicator}>
+          <Text style={styles.typingText}>
+            {typingUsers.length === 1
+              ? 'Someone is typing...'
+              : `${typingUsers.length} people are typing...`}
+          </Text>
+        </View>
+      );
+    };
 
   const renderMessage = ({ item }: { item: Message }) => (
     <View style={styles.messageWrapper}>
@@ -523,42 +678,19 @@ const ChatScreen: React.FC = () => {
         <EmptyStateMessage />
       ) : (
         <FlatList
-          ref={flatListRef}
-          data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.messageList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        />
+        ref={flatListRef}
+        data={messages}
+        renderItem={renderMessage}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.messageList}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        ListEmptyComponent={EmptyStateMessage}
+        ListFooterComponent={renderTypingIndicator}
+      />
       )}
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputContainer}
-      >
-        <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
-          <Plus width={24} height={24} fill={COLORS.primary} />
-        </TouchableOpacity>
-        <TextInput
-          style={styles.input}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Type a message"
-          placeholderTextColor={COLORS.textPlaceholder}
-        />
-        <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
-          <Camera width={24} height={24} fill={COLORS.white} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => sendMessage('text')}
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-          disabled={!inputText.trim()}
-        >
-          <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
-            Send
-          </Text>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+ 
+      {renderInput()}
     </SafeAreaView>
   );
 };
@@ -569,6 +701,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.lightBg,
+  },
+  typingIndicator: {
+    padding: SIZES.small,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    marginHorizontal: SIZES.medium,
+    marginVertical: SIZES.small,
+    borderRadius: SIZES.small,
+  },
+  typingText: {
+    fontFamily: FONTS.RADIO_CANADA_REGULAR,
+    fontSize: SIZES.small,
+    color: COLORS.textColor,
+    fontStyle: 'italic',
   },
   loadingText: {
     marginTop: SIZES.medium,
