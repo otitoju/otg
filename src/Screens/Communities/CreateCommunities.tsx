@@ -67,48 +67,62 @@ const CreateCommunities = () => {
         );
     };
 
-    const handleCreateCommunity = async () => {
-        if (!communityName.trim() || !communityDescription.trim()) {
-            Alert.alert('Error', 'Please fill in all required fields.');
-            return;
-        }
+const handleCreateCommunity = async () => {
+    if (!communityName.trim() || !communityDescription.trim()) {
+        Alert.alert('Error', 'Please fill in all required fields.');
+        return;
+    }
 
-        if (!userId) {
-            Alert.alert('Error', 'User ID not found. Please log in again.');
-            return;
-        }
+    if (!userId) {
+        Alert.alert('Error', 'User ID not found. Please log in again.');
+        return;
+    }
 
-        setIsCreating(true);
+    setIsCreating(true);
 
-        const roomData = {
-            name: communityName,
-            type: 'group',
-            description: communityDescription,
-            image_url: selectedImage || '',
-            status: communityType,
-            created_by: userId, // Use actual userId
-            member_ids: [userId], // Assign the current user as a member
-        };
-
-        try {
-            const response = await axios.post(
-                'https://api.onthegoafrica.com/api/v1/chat/room/create',
-                roomData
-            );
-
-            if (response.data.success) {
-                setIsSuccessModalVisible(true);
-            } else {
-                console.log('Failed to create community:', response.data.message);
-                Alert.alert('Error', 'Failed to create the community. Please try again.');
-            }
-        } catch (error) {
-            console.log('Error creating community:', error);
-            Alert.alert('Error', 'An error occurred while creating the community.');
-        } finally {
-            setIsCreating(false);
-        }
+    const roomData = {
+        name: communityName,
+        type: 'group',
+        description: communityDescription,
+        image_url: selectedImage || '',
+        status: communityType,
+        created_by: userId, // Use actual userId
+        member_ids: [userId], // Assign the current user as a member
     };
+
+    console.log('Room data to be sent:', roomData);
+
+    try {
+        const apiUrl = 'https://api.onthegoafrica.com/api/v1/chat/room/create';
+        console.log('Sending request to:', apiUrl);
+
+        const response = await axios.post(apiUrl, roomData);
+
+        console.log('Response received:', response.data);
+
+        if (response.data.success) {
+            setIsSuccessModalVisible(true);
+        } else {
+            console.log('Failed to create community:', response.data.message);
+            Alert.alert('Error', 'Failed to create the community. Please try again.');
+        }
+    } catch (error) {
+        if (error.response) {
+            // Server responded with a status other than 2xx
+            console.log('Error response from server:', error.response.data);
+        } else if (error.request) {
+            // Request was made, but no response received
+            console.log('No response received:', error.request);
+        } else {
+            // Something else caused the error
+            console.log('Error setting up request:', error.message);
+        }
+        Alert.alert('Error', 'An error occurred while creating the community.');
+    } finally {
+        setIsCreating(false);
+    }
+};
+
 
 
     const handleInviteFriends = () => {

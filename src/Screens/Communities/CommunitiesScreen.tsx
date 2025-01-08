@@ -79,9 +79,16 @@ const CommunityScreen: React.FC = () => {
                     created_by: room.created_by,
                     is_member: true,
                 }));
+
+                // Log Integrated Communities
+                console.log(`Integrated Communities (${integratedMapped.length}):`);
+                integratedMapped.forEach((community, index) => {
+                    console.log(`${index + 1}. ${community.name} - Image URL:`, community.image_url);
+                });
+
                 setIntegratedCommunities(integratedMapped);
             }
-    
+
             // Fetch Other Communities
             const otherResponse = await axios.get(
                 'https://api.onthegoafrica.com/api/v1/chat/rooms'
@@ -102,6 +109,13 @@ const CommunityScreen: React.FC = () => {
                         (room: Community) =>
                             !integratedMapped.some((integrated) => integrated.id === room.id)
                     );
+
+                // Log Other Communities
+                console.log(`Other Communities (${otherMapped.length}):`);
+                otherMapped.forEach((community, index) => {
+                    console.log(`${index + 1}. ${community.name} - Image URL:`, community.image_url);
+                });
+
                 setOtherCommunities(otherMapped);
             }
         } catch (error) {
@@ -111,7 +125,9 @@ const CommunityScreen: React.FC = () => {
             setLoading(false);
         }
     };
-    
+
+
+
     const joinCommunity = async (roomId: number) => {
         if (!userId) return;
 
@@ -167,8 +183,8 @@ const CommunityScreen: React.FC = () => {
     const openCommunityModal = (community: Community) => {
         setSelectedCommunity({
             ...community,
-            image_url: typeof community.image_url === 'string' 
-                ? { uri: community.image_url } 
+            image_url: typeof community.image_url === 'string'
+                ? { uri: community.image_url }
                 : community.image_url || require('../../assets/images/Communities/placeholder.png'),
         });
         setIsDetailsModalVisible(true);
@@ -197,7 +213,7 @@ const CommunityScreen: React.FC = () => {
         );
     }
 
- 
+
     return (
         <View style={styles.container}>
             <CommunityHeader onAddPress={() => navigation.navigate('CREATECOMMUNITIES')} />
@@ -220,10 +236,10 @@ const CommunityScreen: React.FC = () => {
                     }
                     description={selectedCommunity.description || "No description available"}
                     buttonText={
-                        selectedCommunity.created_by === userId 
-                            ? "Invite Friends" 
-                            : (selectedCommunity.is_member 
-                                ? "Open Community" 
+                        selectedCommunity.created_by === userId
+                            ? "Invite Friends"
+                            : (selectedCommunity.is_member
+                                ? "Open Community"
                                 : (joining ? "Joining..." : "Join Community"))
                     }
                     onButtonPress={() => handleCommunityAction(selectedCommunity)}
@@ -247,8 +263,8 @@ const CommunityScreen: React.FC = () => {
                                 key={community.id}
                                 name={community.name}
                                 members={community.members}
-                                image={typeof community.image_url === 'string' 
-                                    ? { uri: community.image_url } 
+                                image={typeof community.image_url === 'string'
+                                    ? { uri: community.image_url }
                                     : community.image_url}
                                 onPress={() => openCommunityModal(community)}
                             />
@@ -266,8 +282,8 @@ const CommunityScreen: React.FC = () => {
                             key={community.id}
                             name={community.name}
                             members={community.members}
-                            image={typeof community.image_url === 'string' 
-                                ? { uri: community.image_url } 
+                            image={typeof community.image_url === 'string'
+                                ? { uri: community.image_url }
                                 : community.image_url}
                             status={community.status}
                             onPress={() => openCommunityModal(community)}
