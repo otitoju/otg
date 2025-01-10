@@ -1,5 +1,5 @@
 export const API_KEY = '26a3281bfc65b39527447691941d6a707357a1278b1b2ec91742faec9de53ac8';
-export const BASE_URL = 'https://api.onthegoafrica.com/api/v1/';
+export const BASE_URL = '192.168.0.114:5000/api/v1/';
 
 export const calculateTimeAgo = (createdAt: Date) => {
     const now = new Date();

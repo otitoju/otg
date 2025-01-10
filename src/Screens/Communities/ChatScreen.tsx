@@ -119,7 +119,7 @@ const SidePanel: React.FC<{
 
       // Make DELETE request
       const response = await axios.delete(
-        'https://api.onthegoafrica.com/api/v1/chat/room/member/remove',
+        'http://192.168.0.114:5000/api/v1/chat/room/member/remove',
         {
           data: requestData, // DELETE requests pass data here
           headers: {
@@ -214,7 +214,7 @@ const SidePanel: React.FC<{
 
 
 const PLACEHOLDER_PROFILE = require('../../assets/images/Communities/placeholder.png');
-const API_BASE_URL = 'https://api.onthegoafrica.com/api/v1';
+const API_BASE_URL = 'http://192.168.0.114:5000/api/v1';
 
 const ChatScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -238,8 +238,7 @@ const ChatScreen: React.FC = () => {
   // Initialize socket connection
   useEffect(() => {
     if (senderId) {
-      // Initialize socket
-      const newSocket = io('https://api.onthegoafrica.com', {
+      const newSocket = io('http://192.168.0.114:5000', {
         transports: ['websocket'],
         query: {
           userId: senderId
@@ -259,7 +258,13 @@ const ChatScreen: React.FC = () => {
       });
 
       // Handle incoming messages
+      // Modified message handling to prevent duplicates
       newSocket.on('new_message', (message) => {
+        // Check if this is a message we sent (has a temp_id)
+        const existingMessageIndex = messages.findIndex(msg =>
+          msg.id === message.temp_id || msg.id === message.id.toString()
+        );
+
         const formattedMessage: Message = {
           id: message.id.toString(),
           content: message.content,
@@ -274,7 +279,18 @@ const ChatScreen: React.FC = () => {
           senderAvatar: parseInt(message.sender_id) === parseInt(senderId) ? null : message.sender_avatar,
         };
 
-        setMessages(prev => [...prev, formattedMessage]);
+        setMessages(prev => {
+          if (existingMessageIndex !== -1) {
+            // Replace temporary message with server-confirmed message
+            const newMessages = [...prev];
+            newMessages[existingMessageIndex] = formattedMessage;
+            return newMessages;
+          } else {
+            // Add new message from other users
+            return [...prev, formattedMessage];
+          }
+        });
+
         // Scroll to bottom when new message arrives
         flatListRef.current?.scrollToEnd({ animated: true });
       });
@@ -429,35 +445,27 @@ const ChatScreen: React.FC = () => {
       return;
     }
 
+    const tempId = `temp-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+
+    // Create message object for socket
     const messageData = {
       room_id: roomId,
       sender_id: senderId,
       content: type === 'text' ? inputText.trim() : '',
       media_url: type !== 'text' ? content.uri : null,
-      timestamp: new Date().toISOString()
+      timestamp,
+      temp_id: tempId // Add temporary ID to track this message
     };
 
-    // Optimistically add message to UI
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      }).toLowerCase(),
-      type,
-      content: type === 'text' ? inputText.trim() : '',
-      fileUrl: type !== 'text' ? content.uri : undefined,
-      fileName: type === 'document' ? content.name : undefined,
-    };
-
-    setMessages(prev => [...prev, newMessage]);
+  
     setInputText('');
     Keyboard.dismiss();
 
     // Emit message through socket
     socket.emit('send_message', messageData);
   };
+
 
   // Handle typing indicator
   const handleTyping = () => {
@@ -572,20 +580,20 @@ const ChatScreen: React.FC = () => {
     </KeyboardAvoidingView>
   );
 
-    // Add typing indicator component
-    const renderTypingIndicator = () => {
-      if (typingUsers.length === 0) return null;
-  
-      return (
-        <View style={styles.typingIndicator}>
-          <Text style={styles.typingText}>
-            {typingUsers.length === 1
-              ? 'Someone is typing...'
-              : `${typingUsers.length} people are typing...`}
-          </Text>
-        </View>
-      );
-    };
+  // Add typing indicator component
+  const renderTypingIndicator = () => {
+    if (typingUsers.length === 0) return null;
+
+    return (
+      <View style={styles.typingIndicator}>
+        <Text style={styles.typingText}>
+          {typingUsers.length === 1
+            ? 'Someone is typing...'
+            : `${typingUsers.length} people are typing...`}
+        </Text>
+      </View>
+    );
+  };
 
   const renderMessage = ({ item }: { item: Message }) => (
     <View style={styles.messageWrapper}>
@@ -678,18 +686,18 @@ const ChatScreen: React.FC = () => {
         <EmptyStateMessage />
       ) : (
         <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messageList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        ListEmptyComponent={EmptyStateMessage}
-        ListFooterComponent={renderTypingIndicator}
-      />
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messageList}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          ListEmptyComponent={EmptyStateMessage}
+          ListFooterComponent={renderTypingIndicator}
+        />
       )}
 
- 
+
       {renderInput()}
     </SafeAreaView>
   );

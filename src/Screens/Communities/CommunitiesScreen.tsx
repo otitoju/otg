@@ -65,7 +65,7 @@ const CommunityScreen: React.FC = () => {
         try {
             // Fetch Integrated Communities
             const integratedResponse = await axios.get(
-                `https://api.onthegoafrica.com/api/v1/chat/user/${userId}/rooms`
+                `http://192.168.0.114:5000/api/v1/chat/user/${userId}/rooms`
             );
             let integratedMapped: Community[] = [];
             if (integratedResponse.data.success) {
@@ -91,7 +91,7 @@ const CommunityScreen: React.FC = () => {
 
             // Fetch Other Communities
             const otherResponse = await axios.get(
-                'https://api.onthegoafrica.com/api/v1/chat/rooms'
+                'http://192.168.0.114:5000/api/v1/chat/rooms'
             );
             if (otherResponse.data.success) {
                 const otherMapped = otherResponse.data.data
@@ -134,7 +134,7 @@ const CommunityScreen: React.FC = () => {
         setJoining(true);
         try {
             const response = await axios.post(
-                'https://api.onthegoafrica.com/api/v1/chat/room/member/add',
+                'http://192.168.0.114:5000/api/v1/chat/room/member/add',
                 {
                     room_id: roomId,
                     user_id: userId

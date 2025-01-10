@@ -13,7 +13,7 @@ import InfoIcon from './../../assets/images/Profile/logout.svg';
 
 // Constants
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
-const API_BASE_URL = 'https://api.onthegoafrica.com/api/v1';
+const API_BASE_URL = 'http://192.168.0.114:5000/api/v1';
 const REFRESH_INTERVAL = 60000; // 1 minute in milliseconds
 
 interface ChatRoom {

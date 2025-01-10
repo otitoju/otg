@@ -93,7 +93,7 @@ const handleCreateCommunity = async () => {
     console.log('Room data to be sent:', roomData);
 
     try {
-        const apiUrl = 'https://api.onthegoafrica.com/api/v1/chat/room/create';
+        const apiUrl = 'http://192.168.0.114:5000/api/v1/chat/room/create';
         console.log('Sending request to:', apiUrl);
 
         const response = await axios.post(apiUrl, roomData);
