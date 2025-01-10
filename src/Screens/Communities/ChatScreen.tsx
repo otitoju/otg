@@ -438,6 +438,21 @@ const ChatScreen: React.FC = () => {
     }
   };
 
+  const selectImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibrary({
+        mediaType: 'photo',
+        quality: 1
+      });
+      if (result.assets?.[0]) {
+        sendMessage('image', result.assets[0]);
+      }
+    } catch (error) {
+      console.error('Error selecting image:', error);
+      setError('Failed to select image');
+    }
+  };
+
   const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
     if (!senderId || !socket) {
@@ -466,7 +481,6 @@ const ChatScreen: React.FC = () => {
     socket.emit('send_message', messageData);
   };
 
-
   // Handle typing indicator
   const handleTyping = () => {
     if (!socket || !senderId) return;
@@ -482,21 +496,6 @@ const ChatScreen: React.FC = () => {
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit('typing_end', { room_id: roomId, user_id: senderId });
     }, 1500);
-  };
-
-  const selectImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibrary({
-        mediaType: 'photo',
-        quality: 1
-      });
-      if (result.assets?.[0]) {
-        sendMessage('image', result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error selecting image:', error);
-      setError('Failed to select image');
-    }
   };
 
   const selectDocument = async () => {

@@ -67,63 +67,75 @@ const CreateCommunities = () => {
         );
     };
 
-const handleCreateCommunity = async () => {
-    if (!communityName.trim() || !communityDescription.trim()) {
-        Alert.alert('Error', 'Please fill in all required fields.');
-        return;
-    }
+    const handleCreateCommunity = async () => {
+        if (!communityName.trim() || !communityDescription.trim()) {
+            Alert.alert('Error', 'Please fill in all required fields.');
+            return;
+        }
 
-    if (!userId) {
-        Alert.alert('Error', 'User ID not found. Please log in again.');
-        return;
-    }
+        if (!userId) {
+            Alert.alert('Error', 'User ID not found. Please log in again.');
+            return;
+        }
 
-    setIsCreating(true);
+        setIsCreating(true);
 
-    const roomData = {
-        name: communityName,
-        type: 'group',
-        description: communityDescription,
-        image_url: selectedImage || '',
-        status: communityType,
-        created_by: userId, // Use actual userId
-        member_ids: [userId], // Assign the current user as a member
+        // Create FormData object to send both image and other data
+        const formData = new FormData();
+
+        // Append the image if selected
+        if (selectedImage) {
+            formData.append('image_url', {
+                uri: selectedImage,
+                type: 'image/jpeg',  // Adjust the type based on the actual image type (jpeg, png, etc.)
+                name: 'community-image.jpg',
+            });
+        }
+
+        // Append other community data
+        formData.append('name', communityName);
+        formData.append('type', 'group');
+        formData.append('description', communityDescription);
+        formData.append('status', communityType);
+        formData.append('created_by', userId);
+        formData.append('member_ids', JSON.stringify([userId])); // Pass as JSON string
+
+        console.log('FormData to be sent:', formData);
+
+        try {
+            const apiUrl = 'http://192.168.0.114:5000/api/v1/chat/room/create';
+            console.log('Sending request to:', apiUrl);
+
+            const response = await axios.post(apiUrl, formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',  // Required for file uploads
+                },
+            });
+
+            console.log('Response received:', response.data);
+
+            if (response.data.success) {
+                setIsSuccessModalVisible(true);
+            } else {
+                console.log('Failed to create community:', response.data.message);
+                Alert.alert('Error', 'Failed to create the community. Please try again.');
+            }
+        } catch (error) {
+            if (error.response) {
+                // Server responded with a status other than 2xx
+                console.log('Error response from server:', error.response.data);
+            } else if (error.request) {
+                // Request was made, but no response received
+                console.log('No response received:', error.request);
+            } else {
+                // Something else caused the error
+                console.log('Error setting up request:', error.message);
+            }
+            Alert.alert('Error', 'An error occurred while creating the community.');
+        } finally {
+            setIsCreating(false);
+        }
     };
-
-    console.log('Room data to be sent:', roomData);
-
-    try {
-        const apiUrl = 'http://192.168.0.114:5000/api/v1/chat/room/create';
-        console.log('Sending request to:', apiUrl);
-
-        const response = await axios.post(apiUrl, roomData);
-
-        console.log('Response received:', response.data);
-
-        if (response.data.success) {
-            setIsSuccessModalVisible(true);
-        } else {
-            console.log('Failed to create community:', response.data.message);
-            Alert.alert('Error', 'Failed to create the community. Please try again.');
-        }
-    } catch (error) {
-        if (error.response) {
-            // Server responded with a status other than 2xx
-            console.log('Error response from server:', error.response.data);
-        } else if (error.request) {
-            // Request was made, but no response received
-            console.log('No response received:', error.request);
-        } else {
-            // Something else caused the error
-            console.log('Error setting up request:', error.message);
-        }
-        Alert.alert('Error', 'An error occurred while creating the community.');
-    } finally {
-        setIsCreating(false);
-    }
-};
-
-
 
     const handleInviteFriends = () => {
         console.log('Inviting friends...');
