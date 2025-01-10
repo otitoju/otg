@@ -617,9 +617,9 @@ const ChatScreen: React.FC = () => {
         </View>
       ) : (
         <>
-          <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
+          {/* <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
             <Plus width={24} height={24} fill={COLORS.primary} />
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           <TextInput
             style={styles.input}
             value={inputText}
