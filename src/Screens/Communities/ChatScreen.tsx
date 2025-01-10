@@ -442,16 +442,76 @@ const ChatScreen: React.FC = () => {
     try {
       const result = await ImagePicker.launchImageLibrary({
         mediaType: 'photo',
-        quality: 1
+        quality: 1,
       });
+  
       if (result.assets?.[0]) {
-        sendMessage('image', result.assets[0]);
+        const image = result.assets[0];
+  
+        // Create form data
+        const formData = new FormData();
+        formData.append('room_id', roomId);
+        formData.append('sender_id', senderId);
+        formData.append('content', ''); // Empty content for image messages
+  
+        // Append the image file
+        formData.append('media', {
+          uri: image.uri,
+          type: image.type || 'image/jpeg',
+          name: image.fileName || 'image.jpg',
+        });
+  
+        // Show loading state
+        setIsUploading(true);
+  
+        try {
+          const response = await axios.post(
+            `${API_BASE_URL}/chat/message/send`,
+            formData,
+            {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+              },
+            }
+          );
+  
+          if (response.data.success) {
+            // Emit the message through socket after successful upload
+            const messageData = {
+              room_id: roomId,
+              sender_id: senderId,
+              content: '', // Content is empty for images
+              media_url: response.data.data.media_url, // Use uploaded image URL from the server
+              timestamp: new Date().toISOString(),
+            };
+  
+            // Emit message through socket
+            socket.emit('send_message', messageData);
+  
+            console.log('Image uploaded and message sent successfully');
+          }
+        } catch (error) {
+          console.error('Error uploading image:', error);
+          Alert.alert(
+            'Error',
+            'Failed to send image. Please try again.'
+          );
+        } finally {
+          setIsUploading(false);
+        }
       }
     } catch (error) {
       console.error('Error selecting image:', error);
-      setError('Failed to select image');
+      Alert.alert(
+        'Error',
+        'Failed to select image. Please try again.'
+      );
     }
   };
+  
+
+  // Add loading state for uploads
+  const [isUploading, setIsUploading] = useState(false);
 
   const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
@@ -473,7 +533,7 @@ const ChatScreen: React.FC = () => {
       temp_id: tempId // Add temporary ID to track this message
     };
 
-  
+
     setInputText('');
     Keyboard.dismiss();
 
@@ -545,37 +605,45 @@ const ChatScreen: React.FC = () => {
     </View>
   );
 
-  // Modify TextInput to handle typing
   const renderInput = () => (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.inputContainer}
     >
-      <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
-        <Plus width={24} height={24} fill={COLORS.primary} />
-      </TouchableOpacity>
-      <TextInput
-        style={styles.input}
-        value={inputText}
-        onChangeText={(text) => {
-          setInputText(text);
-          handleTyping();
-        }}
-        placeholder="Type a message"
-        placeholderTextColor={COLORS.textPlaceholder}
-      />
-      <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
-        <Camera width={24} height={24} fill={COLORS.white} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => sendMessage('text')}
-        style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-        disabled={!inputText.trim()}
-      >
-        <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
-          Send
-        </Text>
-      </TouchableOpacity>
+      {isUploading ? (
+        <View style={styles.uploadingContainer}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={styles.uploadingText}>Sending image...</Text>
+        </View>
+      ) : (
+        <>
+          <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
+            <Plus width={24} height={24} fill={COLORS.primary} />
+          </TouchableOpacity>
+          <TextInput
+            style={styles.input}
+            value={inputText}
+            onChangeText={(text) => {
+              setInputText(text);
+              handleTyping();
+            }}
+            placeholder="Type a message"
+            placeholderTextColor={COLORS.textPlaceholder}
+          />
+          <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
+            <Camera width={24} height={24} fill={COLORS.white} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => sendMessage('text')}
+            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+            disabled={!inputText.trim()}
+          >
+            <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
+              Send
+            </Text>
+          </TouchableOpacity>
+        </>
+      )}
     </KeyboardAvoidingView>
   );
 
@@ -703,6 +771,18 @@ const ChatScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  uploadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    paddingVertical: SIZES.small,
+  },
+  uploadingText: {
+    marginLeft: SIZES.small,
+    fontFamily: FONTS.RADIO_CANADA_MEDIUM,
+    color: COLORS.textColor,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
