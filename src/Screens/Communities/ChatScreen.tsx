@@ -73,7 +73,9 @@ const SidePanel: React.FC<{
   onClose: () => void;
   roomDetails: RoomDetails | null;
   roomUsers: RoomUsers | null;
-}> = ({ visible, onClose, roomDetails, roomUsers }) => {
+  socket: Socket | null;
+  navigation: any;
+}> = ({ visible, onClose, roomDetails, roomUsers, socket, navigation }) => {
   const slideAnim = useRef(new RNAnimated.Value(-300)).current;
 
   useEffect(() => {
@@ -84,11 +86,22 @@ const SidePanel: React.FC<{
     }).start();
   }, [visible]);
 
+  useEffect(() => {
+    const handleLeaveRoom = () => {
+      onClose();
+      navigation.navigate('COMMUNITYSCREEN');
+    };
+
+    socket?.on('leave_room', handleLeaveRoom);
+
+    return () => {
+      socket?.off('leave_room', handleLeaveRoom);
+    };
+  }, [socket]);
+
   const handleLeaveGroup = async () => {
     try {
-      console.log('Initiating leave group process...');
 
-      // Validate user ID
       const userId = await AsyncStorage.getItem('user');
       if (!userId) {
         console.error('User not logged in.');
@@ -102,52 +115,89 @@ const SidePanel: React.FC<{
         Alert.alert('Error', 'Unable to retrieve user information.');
         return;
       }
-      console.log(`User ID retrieved: ${userIdValue}`);
 
-      // Validate room ID
       const roomId = roomDetails?.id;
       if (!roomId) {
         console.error('Invalid room ID.');
         Alert.alert('Error', 'Room information is missing. Please try again.');
         return;
       }
-      console.log(`Room ID: ${roomId}`);
 
-      // Log request data
-      const requestData = { room_id: roomId, user_id: userIdValue };
-      console.log('Request Data:', requestData);
-
-      // Make DELETE request
-      const response = await axios.delete(
-        'http://192.168.0.114:5000/api/v1/chat/room/member/remove',
-        {
-          data: requestData, // DELETE requests pass data here
-          headers: {
-            'Content-Type': 'application/json',
+      Alert.alert(
+        'Leave Group',
+        'Are you sure you want to leave this group?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
           },
-        }
-      );
+          {
+            text: 'Leave',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const response = await axios.delete(
+                  'http://192.168.0.114:5000/api/v1/chat/room/member/remove',
+                  {
+                    data: { room_id: roomId, user_id: userIdValue },
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                  }
+                );
 
-      if (response.status === 200) {
-        console.log('Leave group successful:', response.data);
-        Alert.alert('Success', 'You have successfully left the group.');
-        onClose(); // Close the side panel
-      } else {
-        console.error('Failed to leave group. Response:', response.data);
-        Alert.alert('Error', response.data.message || 'Failed to leave the group.');
-      }
+                if (response.status === 200) {
+
+                  if (socket) {
+                    // Emit a custom event for group leave
+                    socket.emit('group_left', {
+                      room_id: roomId,
+                      user_id: userIdValue,
+                      timestamp: new Date().toISOString(),
+                      type: 'leave' // Add type for better event handling
+                    });
+
+                    // Also emit the original leave_room event
+                    socket.emit('leave_room', {
+                      room_id: roomId,
+                      user_id: userIdValue
+                    });
+                  }
+
+                  onClose();
+
+                  Alert.alert(
+                    'Success',
+                    'You have successfully left the group.',
+                    [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          navigation.goBack();
+                        }
+                      }
+                    ]
+                  );
+                }
+              } catch (error) {
+                if (axios.isAxiosError(error)) {
+                  console.error('Network or server error:', error.response || error.message);
+                  const serverMessage = error.response?.data?.message || 'An error occurred on the server.';
+                  Alert.alert('Error', serverMessage);
+                } else {
+                  console.error('Unexpected error:', error.message);
+                  Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+                }
+              }
+            }
+          }
+        ]
+      );
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error('Network or server error:', error.response || error.message);
-        const serverMessage = error.response?.data?.message || 'An error occurred on the server.';
-        Alert.alert('Error', serverMessage);
-      } else {
-        console.error('Unexpected error:', error.message);
-        Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-      }
+      console.error('Error in handleLeaveGroup:', error);
+      Alert.alert('Error', 'Failed to process leave group request. Please try again.');
     }
   };
-
 
 
   const renderMember = ({ item }: { item: RoomUser }) => (
@@ -189,6 +239,9 @@ const SidePanel: React.FC<{
             <Image
               source={roomDetails?.image_url ? { uri: roomDetails.image_url } : PLACEHOLDER_PROFILE}
               style={styles.groupAvatar}
+              navigation={navigation}
+              navigation={navigation}
+              navigation={navigation}
             />
             <Text style={styles.groupName}>{roomDetails?.name || 'Chat Room'}</Text>
             <Text style={styles.memberCount}>
@@ -444,26 +497,26 @@ const ChatScreen: React.FC = () => {
         mediaType: 'photo',
         quality: 1,
       });
-  
+
       if (result.assets?.[0]) {
         const image = result.assets[0];
-  
+
         // Create form data
         const formData = new FormData();
         formData.append('room_id', roomId);
         formData.append('sender_id', senderId);
         formData.append('content', ''); // Empty content for image messages
-  
+
         // Append the image file
         formData.append('media', {
           uri: image.uri,
           type: image.type || 'image/jpeg',
           name: image.fileName || 'image.jpg',
         });
-  
+
         // Show loading state
         setIsUploading(true);
-  
+
         try {
           const response = await axios.post(
             `${API_BASE_URL}/chat/message/send`,
@@ -474,7 +527,7 @@ const ChatScreen: React.FC = () => {
               },
             }
           );
-  
+
           if (response.data.success) {
             // Emit the message through socket after successful upload
             const messageData = {
@@ -484,10 +537,10 @@ const ChatScreen: React.FC = () => {
               media_url: response.data.data.media_url, // Use uploaded image URL from the server
               timestamp: new Date().toISOString(),
             };
-  
+
             // Emit message through socket
             socket.emit('send_message', messageData);
-  
+
             console.log('Image uploaded and message sent successfully');
           }
         } catch (error) {
@@ -508,7 +561,7 @@ const ChatScreen: React.FC = () => {
       );
     }
   };
-  
+
 
   // Add loading state for uploads
   const [isUploading, setIsUploading] = useState(false);
@@ -741,12 +794,13 @@ const ChatScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </View>
-
       <SidePanel
+        socket={socket}
         visible={sidePanelVisible}
         onClose={() => setSidePanelVisible(false)}
         roomDetails={roomDetails}
         roomUsers={roomUsers}
+        navigation={navigation}
       />
 
       {messages.length === 0 ? (

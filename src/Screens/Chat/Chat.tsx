@@ -10,6 +10,7 @@ import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import LoadingDots from './../../Components/LoadingDots';
 import { useNavigation } from '@react-navigation/native';
 import InfoIcon from './../../assets/images/Profile/logout.svg';
+import { io } from 'socket.io-client';
 
 // Constants
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
@@ -51,13 +52,44 @@ const Chat = () => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedChat, setSelectedChat] = useState<ChatRoom | null>(null);
+  const [socket, setSocket] = useState(null);
 
+  // Initialize socket connection
+  useEffect(() => {
+    if (currentUserId) {
+      const newSocket = io('http://192.168.0.114:5000'); // Replace with your socket server URL
+
+      newSocket.emit('join_user', currentUserId);
+      setSocket(newSocket);
+
+      return () => {
+        newSocket.close();
+      };
+    }
+  }, [currentUserId]);
+
+
+  
+  // Listen for member join updates
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('member_joined', async (data) => {
+      console.log('New member joined:', data);
+      // Fetch latest chat data when someone joins
+      await fetchChats();
+    });
+
+    return () => {
+      socket.off('member_joined');
+    };
+  }, [socket, currentUserId]);
   useEffect(() => {
     const fetchUserId = async () => {
       try {
         const loggedInUser = await AsyncStorage.getItem('user');
         if (!loggedInUser) throw new Error('No user found');
-        
+
         const parsedUser = JSON.parse(loggedInUser);
         const extractedUserId = parsedUser.user.id;
         setCurrentUserId(extractedUserId);
@@ -122,14 +154,20 @@ const Chat = () => {
     }
   };
 
+  // Emit group join event when accepting request
   const handleAcceptRequest = async () => {
-    if (!selectedChat || !currentUserId) return;
+    if (!selectedChat || !currentUserId || !socket) return;
 
     try {
-      // Assuming you have an API endpoint to accept chat requests
       await axios.post(`${API_BASE_URL}/chat/accept-request`, {
         room_id: selectedChat.id,
         user_id: currentUserId,
+      });
+
+      // Emit the group_joined event
+      socket.emit('group_joined', {
+        room_id: selectedChat.id,
+        user_id: currentUserId
       });
 
       setChats((prevChats) =>
@@ -183,8 +221,8 @@ const Chat = () => {
 
   const renderChatItem = ({ item }: { item: ChatRoom }) => {
     // Validate and prepare image URL
-    const avatarSource = item.image_url && item.image_url.trim() !== '' 
-      ? item.image_url 
+    const avatarSource = item.image_url && item.image_url.trim() !== ''
+      ? item.image_url
       : DEFAULT_AVATAR_URL;
 
     return (
@@ -225,8 +263,8 @@ const Chat = () => {
           keyExtractor={(item) => item.id.toString()}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl 
-              refreshing={refreshing} 
+            <RefreshControl
+              refreshing={refreshing}
               onRefresh={handleRefresh}
               colors={[COLORS.primary]} // Add your app's primary color
             />

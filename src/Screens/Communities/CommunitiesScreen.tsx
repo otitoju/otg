@@ -50,6 +50,22 @@ const CommunityScreen: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        if (!socket) return;
+      
+        // Listen for group events with room data
+        socket.on('group_left', async (data: { room_id: string, user_id: string }) => {
+          console.log('Group left event received:', data);
+          if (data.user_id === userId) {
+            await fetchCommunities();
+          }
+        });
+      
+        return () => {
+          socket.off('group_left');
+        };
+      }, [socket, userId]);
+
+    useEffect(() => {
         if (socket && userId) {
             // Listen for general room updates
             socket.on('room_created', (newRoom: any) => {
@@ -172,7 +188,7 @@ const CommunityScreen: React.FC = () => {
 
 
     const joinCommunity = async (roomId: number) => {
-        if (!userId) return;
+        if (!userId || !socket) return;
 
         setJoining(true);
         try {
@@ -185,6 +201,12 @@ const CommunityScreen: React.FC = () => {
             );
 
             if (response.data.success) {
+                // Emit the room_joined event
+                socket.emit('room_joined', {
+                    room_id: roomId,
+                    user_id: userId
+                });
+
                 Alert.alert('Success', 'Successfully joined the community');
                 await fetchCommunities();
                 navigation.navigate('CHATSCREEN', { roomId });
