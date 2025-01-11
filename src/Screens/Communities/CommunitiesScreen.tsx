@@ -10,6 +10,7 @@ import CommunityModal from '../../Components/Modal/CommunityModal';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import LoadingDots from '../../Components/LoadingDots';
 import { useNavigation } from '@react-navigation/native';
+import io from 'socket.io-client';
 
 const { width, height } = Dimensions.get('window');
 
@@ -34,6 +35,48 @@ const CommunityScreen: React.FC = () => {
     const [refreshing, setRefreshing] = useState(false);
     const [joining, setJoining] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
+    const [socket, setSocket] = useState<any>(null);
+
+    useEffect(() => {
+        // Initialize socket connection
+        const newSocket = io('http://192.168.0.114:5000');
+        setSocket(newSocket);
+
+        return () => {
+            if (newSocket) {
+                newSocket.disconnect();
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (socket && userId) {
+            // Listen for general room updates
+            socket.on('room_created', (newRoom: any) => {
+                fetchCommunities();
+            });
+
+            socket.on('room_updated', (updatedRoom: any) => {
+                fetchCommunities();
+            });
+
+            // Listen for user-specific room updates
+            socket.on(`user_${userId}_rooms_updated`, (data: any) => {
+                fetchCommunities();
+            });
+
+            // Connect user to socket
+            socket.emit('join_user', userId);
+        }
+
+        return () => {
+            if (socket) {
+                socket.off('room_created');
+                socket.off('room_updated');
+                socket.off(`user_${userId}_rooms_updated`);
+            }
+        };
+    }, [socket, userId]);
 
     useEffect(() => {
         const fetchUserId = async () => {
