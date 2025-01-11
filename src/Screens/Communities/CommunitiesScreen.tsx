@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet, Text, Alert, RefreshControl, StatusBar, Dimensions, Platform } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Alert, RefreshControl, StatusBar, Dimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import CommunityHeader from '../../Components/CommunityHeader';
@@ -9,7 +9,7 @@ import CommunityListItem from '../../Components/CommunityListItem';
 import CommunityModal from '../../Components/Modal/CommunityModal';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import LoadingDots from '../../Components/LoadingDots';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';  // Added useFocusEffect
 import io from 'socket.io-client';
 
 const { width, height } = Dimensions.get('window');
@@ -26,7 +26,7 @@ interface Community {
 }
 
 const CommunityScreen: React.FC = () => {
-    const navigation: any = useNavigation();
+    const navigation = useNavigation();
     const [isDetailsModalVisible, setIsDetailsModalVisible] = useState(false);
     const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
     const [integratedCommunities, setIntegratedCommunities] = useState<Community[]>([]);
@@ -43,65 +43,42 @@ const CommunityScreen: React.FC = () => {
         setSocket(newSocket);
 
         return () => {
-            if (newSocket) {
-                newSocket.disconnect();
-            }
+            newSocket.disconnect();
         };
     }, []);
 
     useEffect(() => {
-        if (!socket) return;
-      
-        // Listen for group events with room data
-        socket.on('group_left', async (data: { room_id: string, user_id: string }) => {
-          console.log('Group left event received:', data);
-          if (data.user_id === userId) {
-            await fetchCommunities();
-          }
-        });
-      
-        return () => {
-          socket.off('group_left');
+        if (!userId || !socket) return;
+
+        const handleRoomEvent = async () => {
+            await fetchCommunities(); // Re-fetch communities on room event
         };
-      }, [socket, userId]);
 
-    useEffect(() => {
-        if (socket && userId) {
-            // Listen for general room updates
-            socket.on('room_created', (newRoom: any) => {
-                fetchCommunities();
-            });
+        socket.on('room_created', handleRoomEvent);
+        socket.on('room_updated', handleRoomEvent);
+        socket.on(`user_${userId}_rooms_updated`, handleRoomEvent);
+        socket.on('group_left', async (data: { user_id: string }) => {
+            if (data.user_id === userId) {
+                await fetchCommunities(); // Re-fetch if the user left a group
+            }
+        });
 
-            socket.on('room_updated', (updatedRoom: any) => {
-                fetchCommunities();
-            });
-
-            // Listen for user-specific room updates
-            socket.on(`user_${userId}_rooms_updated`, (data: any) => {
-                fetchCommunities();
-            });
-
-            // Connect user to socket
-            socket.emit('join_user', userId);
-        }
+        socket.emit('join_user', userId); // Connect user to socket
 
         return () => {
-            if (socket) {
-                socket.off('room_created');
-                socket.off('room_updated');
-                socket.off(`user_${userId}_rooms_updated`);
-            }
+            socket.off('room_created', handleRoomEvent);
+            socket.off('room_updated', handleRoomEvent);
+            socket.off(`user_${userId}_rooms_updated`, handleRoomEvent);
+            socket.off('group_left');
         };
     }, [socket, userId]);
 
     useEffect(() => {
         const fetchUserId = async () => {
             try {
-                const loggedInUser: any = await AsyncStorage.getItem('user');
+                const loggedInUser = await AsyncStorage.getItem('user');
                 const parsedUser = JSON.parse(loggedInUser);
-                const extractedUserId = parsedUser.user.id;
-                console.log('User ID:', extractedUserId);
-                setUserId(extractedUserId);
+                setUserId(parsedUser.user.id);
             } catch (error) {
                 console.error('Error retrieving user ID:', error);
                 Alert.alert('Error', 'Failed to retrieve user information');
@@ -112,10 +89,15 @@ const CommunityScreen: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (userId) {
-            fetchCommunities();
-        }
+        if (userId) fetchCommunities();
     }, [userId]);
+
+    // Added useFocusEffect to fetch communities when the screen comes into focus
+    useFocusEffect(
+        React.useCallback(() => {
+            if (userId) fetchCommunities();
+        }, [userId])
+    );
 
     const fetchCommunities = async () => {
         if (!userId) return;
@@ -126,9 +108,23 @@ const CommunityScreen: React.FC = () => {
             const integratedResponse = await axios.get(
                 `http://192.168.0.114:5000/api/v1/chat/user/${userId}/rooms`
             );
-            let integratedMapped: Community[] = [];
-            if (integratedResponse.data.success) {
-                integratedMapped = integratedResponse.data.data.map((room: any) => ({
+            const integratedMapped = integratedResponse.data.success ? integratedResponse.data.data.map((room: any) => ({
+                id: room.id,
+                name: room.name,
+                members: room.total_members,
+                status: room.status as 'Public' | 'Private',
+                image_url: room.image_url || require('../../assets/images/Communities/image1.png'),
+                description: room.description,
+                created_by: room.created_by,
+                is_member: true,
+            })) : [];
+
+            setIntegratedCommunities(integratedMapped);
+
+            // Fetch Other Communities
+            const otherResponse = await axios.get('http://192.168.0.114:5000/api/v1/chat/rooms');
+            const otherMapped = otherResponse.data.success ? otherResponse.data.data
+                .map((room: any) => ({
                     id: room.id,
                     name: room.name,
                     members: room.total_members,
@@ -136,47 +132,11 @@ const CommunityScreen: React.FC = () => {
                     image_url: room.image_url || require('../../assets/images/Communities/image1.png'),
                     description: room.description,
                     created_by: room.created_by,
-                    is_member: true,
-                }));
+                    is_member: integratedMapped.some((integrated) => integrated.id === room.id),
+                }))
+                .filter((room: Community) => !integratedMapped.some((integrated) => integrated.id === room.id)) : [];
 
-                // Log Integrated Communities
-                console.log(`Integrated Communities (${integratedMapped.length}):`);
-                integratedMapped.forEach((community, index) => {
-                    console.log(`${index + 1}. ${community.name} - Image URL:`, community.image_url);
-                });
-
-                setIntegratedCommunities(integratedMapped);
-            }
-
-            // Fetch Other Communities
-            const otherResponse = await axios.get(
-                'http://192.168.0.114:5000/api/v1/chat/rooms'
-            );
-            if (otherResponse.data.success) {
-                const otherMapped = otherResponse.data.data
-                    .map((room: any) => ({
-                        id: room.id,
-                        name: room.name,
-                        members: room.total_members,
-                        status: room.status as 'Public' | 'Private',
-                        image_url: room.image_url || require('../../assets/images/Communities/image1.png'),
-                        description: room.description,
-                        created_by: room.created_by,
-                        is_member: integratedMapped.some((integrated) => integrated.id === room.id)
-                    }))
-                    .filter(
-                        (room: Community) =>
-                            !integratedMapped.some((integrated) => integrated.id === room.id)
-                    );
-
-                // Log Other Communities
-                console.log(`Other Communities (${otherMapped.length}):`);
-                otherMapped.forEach((community, index) => {
-                    console.log(`${index + 1}. ${community.name} - Image URL:`, community.image_url);
-                });
-
-                setOtherCommunities(otherMapped);
-            }
+            setOtherCommunities(otherMapped);
         } catch (error) {
             console.error('Error fetching communities:', error);
             Alert.alert('Error', 'Failed to fetch communities');
@@ -185,8 +145,6 @@ const CommunityScreen: React.FC = () => {
         }
     };
 
-
-
     const joinCommunity = async (roomId: number) => {
         if (!userId || !socket) return;
 
@@ -194,31 +152,20 @@ const CommunityScreen: React.FC = () => {
         try {
             const response = await axios.post(
                 'http://192.168.0.114:5000/api/v1/chat/room/member/add',
-                {
-                    room_id: roomId,
-                    user_id: userId
-                }
+                { room_id: roomId, user_id: userId }
             );
 
             if (response.data.success) {
-                // Emit the room_joined event
-                socket.emit('room_joined', {
-                    room_id: roomId,
-                    user_id: userId
-                });
-
+                socket.emit('room_joined', { room_id: roomId, user_id: userId });
                 Alert.alert('Success', 'Successfully joined the community');
                 await fetchCommunities();
                 navigation.navigate('CHATSCREEN', { roomId });
             } else {
                 Alert.alert('Error', response.data.message || 'Failed to join community');
             }
-        } catch (error: any) {
+        } catch (error) {
             console.error('Error joining community:', error);
-            Alert.alert(
-                'Error',
-                error.response?.data?.message || 'Failed to join community. Please try again.'
-            );
+            Alert.alert('Error', 'Failed to join community. Please try again.');
         } finally {
             setJoining(false);
             setIsDetailsModalVisible(false);
@@ -272,12 +219,10 @@ const CommunityScreen: React.FC = () => {
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
-                <Text style={styles.loadingText}>Loading Communities...</Text>
                 <LoadingDots />
             </View>
         );
     }
-
 
     return (
         <View style={styles.container}>
@@ -292,9 +237,7 @@ const CommunityScreen: React.FC = () => {
                     title={selectedCommunity.name}
                     subtitle={
                         <View style={styles.modalSubtitleContainer}>
-                            <Text style={styles.membersText}>
-                                {selectedCommunity.members} Members
-                            </Text>
+                            <Text style={styles.membersText}>{selectedCommunity.members} Members</Text>
                             <Text style={styles.bulletPoint}> • </Text>
                             {renderStatus(selectedCommunity.status)}
                         </View>
@@ -314,11 +257,7 @@ const CommunityScreen: React.FC = () => {
                 />
             )}
 
-            <ScrollView
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-            >
+            <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
                 {/* Integrated Communities Section */}
                 <Text style={styles.sectionTitle}>Integrated Communities</Text>
                 {integratedCommunities.length > 0 ? (
@@ -361,6 +300,7 @@ const CommunityScreen: React.FC = () => {
         </View>
     );
 };
+
 
 
 const styles = StyleSheet.create({

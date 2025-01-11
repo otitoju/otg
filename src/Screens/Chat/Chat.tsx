@@ -1,6 +1,5 @@
-// Chat.tsx
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl, StatusBar, Platform } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, RefreshControl , StatusBar} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import ChatItem from './../../Components/ChatItem';
@@ -11,8 +10,8 @@ import LoadingDots from './../../Components/LoadingDots';
 import { useNavigation } from '@react-navigation/native';
 import InfoIcon from './../../assets/images/Profile/logout.svg';
 import { io } from 'socket.io-client';
+import { useFocusEffect } from '@react-navigation/native';
 
-// Constants
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
 const API_BASE_URL = 'http://192.168.0.114:5000/api/v1';
 
@@ -52,44 +51,14 @@ const Chat = () => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedChat, setSelectedChat] = useState<ChatRoom | null>(null);
-  const [socket, setSocket] = useState(null);
+  const [socket, setSocket] = useState<any>(null);
 
   // Initialize socket connection
-  useEffect(() => {
-    if (currentUserId) {
-      const newSocket = io('http://192.168.0.114:5000'); // Replace with your socket server URL
-
-      newSocket.emit('join_user', currentUserId);
-      setSocket(newSocket);
-
-      return () => {
-        newSocket.close();
-      };
-    }
-  }, [currentUserId]);
-
-
-  
-  // Listen for member join updates
-  useEffect(() => {
-    if (!socket) return;
-
-    socket.on('member_joined', async (data) => {
-      console.log('New member joined:', data);
-      // Fetch latest chat data when someone joins
-      await fetchChats();
-    });
-
-    return () => {
-      socket.off('member_joined');
-    };
-  }, [socket, currentUserId]);
   useEffect(() => {
     const fetchUserId = async () => {
       try {
         const loggedInUser = await AsyncStorage.getItem('user');
         if (!loggedInUser) throw new Error('No user found');
-
         const parsedUser = JSON.parse(loggedInUser);
         const extractedUserId = parsedUser.user.id;
         setCurrentUserId(extractedUserId);
@@ -98,17 +67,23 @@ const Chat = () => {
         setError('Failed to retrieve user information');
       }
     };
-
     fetchUserId();
   }, []);
 
   useEffect(() => {
-    if (currentUserId) {
-      fetchChats();
-    }
+    if (!currentUserId) return;
+
+    const socketConnection = io('http://192.168.0.114:5000'); // Replace with your socket server URL
+    socketConnection.emit('join_user', currentUserId);
+    setSocket(socketConnection);
+
+    return () => {
+      socketConnection.close();
+    };
   }, [currentUserId]);
 
-  const fetchChats = async () => {
+  // Fetch chat data
+  const fetchChats = useCallback(async () => {
     if (!currentUserId) return;
 
     try {
@@ -130,17 +105,45 @@ const Chat = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [currentUserId]);
 
+  useEffect(() => {
+    fetchChats();
+  }, [currentUserId]);
+
+  // Re-fetch chats on focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchChats();
+    }, [fetchChats])
+  );
+
+  // Socket event listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRoomEvent = async () => {
+      await fetchChats();
+    };
+
+    socket.on('group_joined', handleRoomEvent);
+    socket.on('group_left', handleRoomEvent);
+    socket.on('member_joined', handleRoomEvent);
+
+    return () => {
+      socket.off('group_joined', handleRoomEvent);
+      socket.off('group_left', handleRoomEvent);
+      socket.off('member_joined', handleRoomEvent);
+    };
+  }, [socket, fetchChats]);
+
+  // Handle chat refresh
   const handleRefresh = () => {
-    if (!currentUserId) return;
     setRefreshing(true);
     fetchChats();
   };
 
   const handleChatPress = (chat: ChatRoom) => {
-    if (!currentUserId) return;
-
     if (chat.status === 'pending') {
       setSelectedChat(chat);
       setShowRequestModal(true);
@@ -154,7 +157,6 @@ const Chat = () => {
     }
   };
 
-  // Emit group join event when accepting request
   const handleAcceptRequest = async () => {
     if (!selectedChat || !currentUserId || !socket) return;
 
@@ -164,10 +166,9 @@ const Chat = () => {
         user_id: currentUserId,
       });
 
-      // Emit the group_joined event
       socket.emit('group_joined', {
         room_id: selectedChat.id,
-        user_id: currentUserId
+        user_id: currentUserId,
       });
 
       setChats((prevChats) =>
@@ -188,7 +189,6 @@ const Chat = () => {
     if (!selectedChat || !currentUserId) return;
 
     try {
-      // Assuming you have an API endpoint to decline chat requests
       await axios.post(`${API_BASE_URL}/chat/decline-request`, {
         room_id: selectedChat.id,
         user_id: currentUserId,
@@ -220,7 +220,6 @@ const Chat = () => {
   };
 
   const renderChatItem = ({ item }: { item: ChatRoom }) => {
-    // Validate and prepare image URL
     const avatarSource = item.image_url && item.image_url.trim() !== ''
       ? item.image_url
       : DEFAULT_AVATAR_URL;
@@ -266,7 +265,7 @@ const Chat = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={handleRefresh}
-              colors={[COLORS.primary]} // Add your app's primary color
+              colors={[COLORS.primary]}
             />
           }
           ListEmptyComponent={<EmptyState />}
@@ -290,6 +289,7 @@ const Chat = () => {
     </View>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {

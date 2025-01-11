@@ -174,6 +174,7 @@ const SidePanel: React.FC<{
                         text: 'OK',
                         onPress: () => {
                           navigation.goBack();
+                          
                         }
                       }
                     ]
@@ -284,6 +285,9 @@ const ChatScreen: React.FC = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+
+  
 
 
   const { roomId } = route.params as { roomId: string };
