@@ -33,6 +33,8 @@ const CreateCommunities = () => {
     const [isSuccessModalVisible, setIsSuccessModalVisible] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [userId, setUserId] = useState(null);
+    const [createdRoomId, setCreatedRoomId] = useState(null); // Add this state for storing room ID
+
 
     useEffect(() => {
         const fetchUserId = async () => {
@@ -72,49 +74,42 @@ const CreateCommunities = () => {
             Alert.alert('Error', 'Please fill in all required fields.');
             return;
         }
-
+    
         if (!userId) {
             Alert.alert('Error', 'User ID not found. Please log in again.');
             return;
         }
-
+    
         setIsCreating(true);
-
-        // Create FormData object to send both image and other data
+    
         const formData = new FormData();
-
-        // Append the image if selected
+    
         if (selectedImage) {
             formData.append('image_url', {
                 uri: selectedImage,
-                type: 'image/jpeg',  // Adjust the type based on the actual image type (jpeg, png, etc.)
+                type: 'image/jpeg',
                 name: 'community-image.jpg',
             });
         }
-
-        // Append other community data
+    
         formData.append('name', communityName);
         formData.append('type', 'group');
         formData.append('description', communityDescription);
         formData.append('status', communityType);
         formData.append('created_by', userId);
-        formData.append('member_ids', JSON.stringify([userId])); // Pass as JSON string
-
-        console.log('FormData to be sent:', formData);
-
+        formData.append('member_ids', JSON.stringify([userId]));
+    
         try {
             const apiUrl = 'http://192.168.0.114:5000/api/v1/chat/room/create';
-            console.log('Sending request to:', apiUrl);
-
             const response = await axios.post(apiUrl, formData, {
                 headers: {
-                    'Content-Type': 'multipart/form-data',  // Required for file uploads
+                    'Content-Type': 'multipart/form-data',
                 },
             });
-
-            console.log('Response received:', response.data);
-
+    
             if (response.data.success) {
+                // Set the created room ID from the response
+                setCreatedRoomId(response.data.data.id);
                 setIsSuccessModalVisible(true);
             } else {
                 console.log('Failed to create community:', response.data.message);
@@ -122,13 +117,10 @@ const CreateCommunities = () => {
             }
         } catch (error) {
             if (error.response) {
-                // Server responded with a status other than 2xx
                 console.log('Error response from server:', error.response.data);
             } else if (error.request) {
-                // Request was made, but no response received
                 console.log('No response received:', error.request);
             } else {
-                // Something else caused the error
                 console.log('Error setting up request:', error.message);
             }
             Alert.alert('Error', 'An error occurred while creating the community.');
@@ -138,9 +130,21 @@ const CreateCommunities = () => {
     };
 
     const handleInviteFriends = () => {
-        console.log('Inviting friends...');
+        if (!createdRoomId || !userId) {
+            Alert.alert('Error', 'Unable to proceed with invitations. Please try again.');
+            return;
+        }
+
+        console.log('Navigating to invite friends with:', {
+            roomId: createdRoomId,
+            inviterId: userId
+        });
+
         setIsSuccessModalVisible(false);
-        navigation.navigate('INVITEFREIENDS');
+        navigation.navigate('INVITEFREIENDS', {
+            roomId: createdRoomId,
+            inviterId: userId
+        });
     };
 
     return (

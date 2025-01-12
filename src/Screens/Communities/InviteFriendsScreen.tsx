@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, FlatList, Image, TouchableOpacity, StyleSheet, SafeAreaView, Dimensions, StatusBar } from 'react-native';
+import { View, Text, TextInput, FlatList, Image, TouchableOpacity, StyleSheet, SafeAreaView, Dimensions, StatusBar, Alert, Platform } from 'react-native';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import Close from '../../assets/images/Communities/Vector.svg';
 import Search from '../../assets/images/Communities/Search.svg';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import LoadingDots from '../../Components/LoadingDots';
 
 const { width, height } = Dimensions.get('window');
@@ -17,13 +17,22 @@ interface Friend {
     picture: string | null;
 }
 
+type NavigationProps = {
+    roomId: number;
+    inviterId: string;
+};
+
 const InviteFriendsScreen: React.FC = () => {
     const navigation = useNavigation();
+    const route = useRoute();
+    const { roomId, inviterId } = route.params as NavigationProps;
+
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFriends, setSelectedFriends] = useState<number[]>([]);
     const [friends, setFriends] = useState<Friend[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [sendingInvites, setSendingInvites] = useState(false);
 
     useEffect(() => {
         fetchUsers();
@@ -36,12 +45,74 @@ const InviteFriendsScreen: React.FC = () => {
                 throw new Error('Network response was not ok');
             }
             const data = await response.json();
-            setFriends(data.info);
+            // Convert inviterId to number for consistent comparison
+            const inviterIdAsNumber = Number(inviterId);
+            // Filter out the current user from the friends list using number comparison
+            const filteredUsers = data.info.filter((user: Friend) => user.id !== inviterIdAsNumber);
+            setFriends(filteredUsers);
             setLoading(false);
         } catch (err) {
             setError('Failed to fetch users');
             setLoading(false);
             console.error('Error fetching users:', err);
+        }
+    };
+
+    const sendInvitations = async () => {
+        if (selectedFriends.length === 0) {
+            Alert.alert('Error', 'Please select at least one friend to invite.');
+            return;
+        }
+    
+        setSendingInvites(true);
+        try {
+            const invitationData = {
+                inviter_id: inviterId,
+                room_id: roomId,
+                invitees: selectedFriends
+            };
+    
+            console.log('Sending invitation data:', invitationData);
+    
+            const response = await fetch('http://192.168.0.114:5000/api/v1/chat/invitation/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(invitationData)
+            });
+    
+            const responseText = await response.text();
+            let responseData;
+    
+            try {
+                responseData = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Non-JSON response:', responseText);
+                throw new Error(`Server returned invalid JSON. Status: ${response.status}`);
+            }
+    
+            if (!response.ok) {
+                throw new Error(responseData.message || `Server error: ${response.status}`);
+            }
+    
+            Alert.alert('Success', 'Invitations sent successfully', [
+                { 
+                    text: 'OK', 
+                    onPress: () => {
+                        navigation.navigate('CHATSCREEN', { roomId });
+                    } 
+                }
+            ]);
+        } catch (err) {
+            console.error('Error sending invitations:', err);
+            let errorMessage = 'Failed to send invitations. Please try again.';
+            if (err instanceof Error) {
+                errorMessage = err.message;
+            }
+            Alert.alert('Error', errorMessage);
+        } finally {
+            setSendingInvites(false);
         }
     };
 
@@ -51,11 +122,11 @@ const InviteFriendsScreen: React.FC = () => {
         friend.username.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const toggleFriendSelection = (friendId: number) => {
+    const toggleFriendSelection = (userId: number) => {
         setSelectedFriends(prev =>
-            prev.includes(friendId)
-                ? prev.filter(id => id !== friendId)
-                : [...prev, friendId]
+            prev.includes(userId)
+                ? prev.filter(id => id !== userId)
+                : [...prev, userId]
         );
     };
 
@@ -69,7 +140,7 @@ const InviteFriendsScreen: React.FC = () => {
     const renderFriendItem = ({ item }: { item: Friend }) => (
         <TouchableOpacity
             style={styles.friendItem}
-            onPress={() => toggleFriendSelection(item.id)}
+            onPress={() => toggleFriendSelection(item.id)} // Changed to use item.id
         >
             {item.picture ? (
                 <Image source={{ uri: item.picture }} style={styles.avatar} resizeMode="cover" />
@@ -87,9 +158,9 @@ const InviteFriendsScreen: React.FC = () => {
             <TouchableOpacity
                 style={[
                     styles.checkbox,
-                    selectedFriends.includes(item.id) && styles.checkboxSelected
+                    selectedFriends.includes(item.id) && styles.checkboxSelected // Changed to use item.id
                 ]}
-                onPress={() => toggleFriendSelection(item.id)}
+                onPress={() => toggleFriendSelection(item.id)} // Changed to use item.id
             />
         </TouchableOpacity>
     );
@@ -130,6 +201,7 @@ const InviteFriendsScreen: React.FC = () => {
                     placeholder="Type a name"
                     value={searchQuery}
                     onChangeText={setSearchQuery}
+                    placeholderTextColor={COLORS.textColor}
                 />
             </View>
 
@@ -141,21 +213,30 @@ const InviteFriendsScreen: React.FC = () => {
             />
 
             <View style={styles.footer}>
-                <TouchableOpacity style={[styles.footerButton, styles.sendFooterButton]}>
+                <TouchableOpacity
+                    style={[styles.footerButton, styles.sendFooterButton]}
+                    onPress={() => Alert.alert('Coming soon', 'This feature will be available soon!')}
+                >
                     <Text style={styles.footerButtonText}>Copy link</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.footerButton, styles.sendInviteButton]}
-                    onPress={() => navigation.navigate('CHAT')}
+                    style={[
+                        styles.footerButton,
+                        styles.sendInviteButton,
+                        (sendingInvites || selectedFriends.length === 0) && styles.disabledButton
+                    ]}
+                    onPress={sendInvitations}
+                    disabled={sendingInvites || selectedFriends.length === 0}
                 >
                     <Text style={[styles.footerButtonText, styles.sendInviteText]}>
-                        Send Invite ({selectedFriends.length})
+                        {sendingInvites ? 'Sending...' : `Send Invite (${selectedFriends.length})`}
                     </Text>
                 </TouchableOpacity>
             </View>
         </SafeAreaView>
     );
 };
+
 
 const styles = StyleSheet.create({
     container: {
@@ -301,6 +382,9 @@ const styles = StyleSheet.create({
     },
     sendInviteText: {
         color: COLORS.white,
+    },
+    disabledButton: {
+        opacity: 0.5,
     },
 });
 

@@ -174,7 +174,7 @@ const SidePanel: React.FC<{
                         text: 'OK',
                         onPress: () => {
                           navigation.goBack();
-                          
+
                         }
                       }
                     ]
@@ -287,7 +287,7 @@ const ChatScreen: React.FC = () => {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
-  
+
 
 
   const { roomId } = route.params as { roomId: string };
@@ -781,9 +781,11 @@ const ChatScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        {/* <TouchableOpacity onPress={() => navigation.navigate('CHAT')} style={styles.backButton}> */}
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Arrow width={24} height={24} fill={COLORS.white} />
         </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.headerContent}
           onPress={() => setSidePanelVisible(true)}
