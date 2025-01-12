@@ -1,36 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, FlatList, Image, TouchableOpacity, StyleSheet, SafeAreaView, Dimensions, StatusBar } from 'react-native';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import Close from '../../assets/images/Communities/Vector.svg';
 import Search from '../../assets/images/Communities/Search.svg';
-import { useNavigation } from '@react-navigation/native'; 
+import { useNavigation } from '@react-navigation/native';
+import LoadingDots from '../../Components/LoadingDots';
 
 const { width, height } = Dimensions.get('window');
 
 interface Friend {
-    id: string;
-    name: string;
+    id: number;
+    firstName: string | null;
+    lastName: string | null;
     username: string;
-    avatar: any; // Changed to any for better handling of local and remote images
+    email: string;
+    picture: string | null;
 }
 
 const InviteFriendsScreen: React.FC = () => {
-    const navigation = useNavigation(); // Get the navigation object
+    const navigation = useNavigation();
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
+    const [selectedFriends, setSelectedFriends] = useState<number[]>([]);
+    const [friends, setFriends] = useState<Friend[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    const friends: Friend[] = [
-        { id: '1', name: 'Jane Doe', username: '@annydoe', avatar: require('../../assets/images/Communities/Ellipse.png') },
-        { id: '2', name: 'Jane Doe', username: '@annydoe', avatar: require('../../assets/images/Communities/Ellipse1.png') },
-        { id: '3', name: 'Jane Doe', username: '@annydoe', avatar: require('../../assets/images/Communities/Ellipse2.png') },
-    ];
+    useEffect(() => {
+        fetchUsers();
+    }, []);
+
+    const fetchUsers = async () => {
+        try {
+            const response = await fetch('http://192.168.0.114:5000/api/v1/users');
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            const data = await response.json();
+            setFriends(data.info);
+            setLoading(false);
+        } catch (err) {
+            setError('Failed to fetch users');
+            setLoading(false);
+            console.error('Error fetching users:', err);
+        }
+    };
 
     const filteredFriends = friends.filter(friend =>
-        friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (friend.firstName?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (friend.lastName?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
         friend.username.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const toggleFriendSelection = (friendId: string) => {
+    const toggleFriendSelection = (friendId: number) => {
         setSelectedFriends(prev =>
             prev.includes(friendId)
                 ? prev.filter(id => id !== friendId)
@@ -38,15 +59,30 @@ const InviteFriendsScreen: React.FC = () => {
         );
     };
 
+    const getDisplayName = (friend: Friend) => {
+        if (friend.firstName && friend.lastName) {
+            return `${friend.firstName} ${friend.lastName}`;
+        }
+        return friend.username;
+    };
+
     const renderFriendItem = ({ item }: { item: Friend }) => (
         <TouchableOpacity
             style={styles.friendItem}
             onPress={() => toggleFriendSelection(item.id)}
         >
-            <Image source={item.avatar} style={styles.avatar} resizeMode="cover" />
+            {item.picture ? (
+                <Image source={{ uri: item.picture }} style={styles.avatar} resizeMode="cover" />
+            ) : (
+                <View style={[styles.avatar, styles.placeholderAvatar]}>
+                    <Text style={styles.avatarText}>
+                        {getDisplayName(item).charAt(0).toUpperCase()}
+                    </Text>
+                </View>
+            )}
             <View style={styles.friendInfo}>
-                <Text style={styles.friendName}>{item.name}</Text>
-                <Text style={styles.friendUsername}>{item.username}</Text>
+                <Text style={styles.friendName}>{getDisplayName(item)}</Text>
+                <Text style={styles.friendUsername}>@{item.username}</Text>
             </View>
             <TouchableOpacity
                 style={[
@@ -54,14 +90,31 @@ const InviteFriendsScreen: React.FC = () => {
                     selectedFriends.includes(item.id) && styles.checkboxSelected
                 ]}
                 onPress={() => toggleFriendSelection(item.id)}
-            >
-            </TouchableOpacity>
+            />
         </TouchableOpacity>
     );
 
+    if (loading) {
+        return (
+            <View style={styles.centerContainer}>
+                <LoadingDots />
+            </View>
+        );
+    }
+
+    if (error) {
+        return (
+            <View style={styles.centerContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity style={styles.retryButton} onPress={fetchUsers}>
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
+
     return (
         <SafeAreaView style={styles.container}>
-            {/* Header Component */}
             <View style={styles.headerStyle}>
                 <TouchableOpacity onPress={() => navigation.goBack()}>
                     <Close width={25} height={14} fill={COLORS.white} />
@@ -83,7 +136,7 @@ const InviteFriendsScreen: React.FC = () => {
             <FlatList
                 data={filteredFriends}
                 renderItem={renderFriendItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item.id.toString()}
                 style={styles.friendList}
             />
 
@@ -96,7 +149,7 @@ const InviteFriendsScreen: React.FC = () => {
                     onPress={() => navigation.navigate('CHAT')}
                 >
                     <Text style={[styles.footerButtonText, styles.sendInviteText]}>
-                        Send Invite
+                        Send Invite ({selectedFriends.length})
                     </Text>
                 </TouchableOpacity>
             </View>
@@ -108,7 +161,28 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.white,
-    marginTop: Platform.OS === 'ios' ? 30 : StatusBar.currentHeight,
+        marginTop: Platform.OS === 'ios' ? 30 : StatusBar.currentHeight,
+    },
+    centerContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: COLORS.white,
+    },
+    errorText: {
+        color: COLORS.textTitle,
+        fontSize: SIZES.large,
+        marginBottom: SIZES.medium,
+    },
+    retryButton: {
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: SIZES.extraLarge,
+        paddingVertical: SIZES.small,
+        borderRadius: 8,
+    },
+    retryButtonText: {
+        color: COLORS.white,
+        fontSize: SIZES.font,
     },
     headerStyle: {
         flexDirection: 'row',
@@ -157,10 +231,20 @@ const styles = StyleSheet.create({
         paddingVertical: SIZES.small,
     },
     avatar: {
-        width: 50, // Adjusted for better visibility
+        width: 50,
         height: 50,
-        borderRadius: 25, // Ensures the avatar is circular
+        borderRadius: 25,
         marginRight: SIZES.small,
+    },
+    placeholderAvatar: {
+        backgroundColor: COLORS.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    avatarText: {
+        color: COLORS.white,
+        fontSize: SIZES.large,
+        fontWeight: 'bold',
     },
     friendInfo: {
         flex: 1,
