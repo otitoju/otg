@@ -137,7 +137,7 @@ const SidePanel: React.FC<{
             onPress: async () => {
               try {
                 const response = await axios.delete(
-                  'http://192.168.0.114:5000/api/v1/chat/room/member/remove',
+                  'http://192.168.0.129:5001/api/v1/chat/room/member/remove',
                   {
                     data: { room_id: roomId, user_id: userIdValue },
                     headers: {
@@ -268,7 +268,7 @@ const SidePanel: React.FC<{
 
 
 const PLACEHOLDER_PROFILE = require('../../assets/images/Communities/placeholder.png');
-const API_BASE_URL = 'http://192.168.0.114:5000/api/v1';
+const API_BASE_URL = 'http://192.168.0.129:5001/api/v1';
 
 const ChatScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -295,7 +295,7 @@ const ChatScreen: React.FC = () => {
   // Initialize socket connection
   useEffect(() => {
     if (senderId) {
-      const newSocket = io('http://192.168.0.114:5000', {
+      const newSocket = io('http://192.168.0.129:5001', {
         transports: ['websocket'],
         query: {
           userId: senderId

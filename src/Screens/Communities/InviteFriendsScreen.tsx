@@ -40,7 +40,7 @@ const InviteFriendsScreen: React.FC = () => {
 
     const fetchUsers = async () => {
         try {
-            const response = await fetch('http://192.168.0.114:5000/api/v1/users');
+            const response = await fetch('http://192.168.0.129:5001/api/v1/users');
             if (!response.ok) {
                 throw new Error('Network response was not ok');
             }
@@ -74,7 +74,7 @@ const InviteFriendsScreen: React.FC = () => {
     
             console.log('Sending invitation data:', invitationData);
     
-            const response = await fetch('http://192.168.0.114:5000/api/v1/chat/invitation/create', {
+            const response = await fetch('http://192.168.0.129:5001/api/v1/chat/invitation/create', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

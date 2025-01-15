@@ -100,7 +100,7 @@ const CreateCommunities = () => {
         formData.append('member_ids', JSON.stringify([userId]));
     
         try {
-            const apiUrl = 'http://192.168.0.114:5000/api/v1/chat/room/create';
+            const apiUrl = 'http://192.168.0.129:5001/api/v1/chat/room/create';
             const response = await axios.post(apiUrl, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',

@@ -13,7 +13,7 @@ import { io } from 'socket.io-client';
 import { useFocusEffect } from '@react-navigation/native';
 
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
-const API_BASE_URL = 'http://192.168.0.114:5000/api/v1';
+const API_BASE_URL = 'http://192.168.0.129:5001/api/v1';
 
 interface ChatRoom {
   id: number;
@@ -43,9 +43,30 @@ interface ApiResponse {
 }
 
 interface Invitation {
-  room_id: number;
-  room_name: string;
-  sender_id: string;
+  invitation: {
+    id: number;
+    inviter_id: number;
+    created_at: string;
+    updated_at: string;
+  };
+  room: {
+    id: number;
+    name: string;
+    type: string;
+    description: string;
+    image_url: string;
+    status: string;
+    total_members: number;
+    created_by: string;
+    members: Array<{ user_id: string }>;
+    created_at: string;
+    updated_at: string;
+  };
+}
+
+interface InvitationResponse {
+  success: boolean;
+  data: Invitation[];
 }
 
 const Chat = () => {
@@ -80,7 +101,7 @@ const Chat = () => {
   useEffect(() => {
     if (!currentUserId) return;
 
-    const socketConnection = io('http://192.168.0.114:5000'); // Replace with your socket server URL
+    const socketConnection = io('http://192.168.0.129:5001'); // Replace with your socket server URL
     socketConnection.emit('join_user', currentUserId);
     setSocket(socketConnection);
 
@@ -99,7 +120,7 @@ const Chat = () => {
         axios.get<ApiResponse>(`${API_BASE_URL}/chat/conversations`, {
           params: { user_id: currentUserId },
         }),
-        axios.get(`${API_BASE_URL}/chat/user/${currentUserId}/invitations`),
+        axios.get<InvitationResponse>(`${API_BASE_URL}/chat/user/${currentUserId}/invitations`),
       ]);
 
       if (chatsResponse.data.success) {
@@ -268,9 +289,12 @@ const Chat = () => {
       ? item.image_url
       : DEFAULT_AVATAR_URL;
 
+    // Add null check for id
+    const itemId = item.id?.toString() || String(Math.random());
+
     return (
       <ChatItem
-        id={item.id.toString()}
+        id={itemId}
         name={item.name}
         message={item.latest_message?.content || 'No messages yet'}
         time={item.latest_message ? formatTime(item.latest_message.timestamp) : formatTime(item.joined_at)}
@@ -281,36 +305,30 @@ const Chat = () => {
     );
   };
 
-  const renderInvitationItem = ({ item }: { item: Invitation }) => {
-    // Assuming you want a default avatar for the invitation if there isn't one
-    const avatarSource = DEFAULT_AVATAR_URL;
 
-    // For now, using the current time as the invitation time (you may replace this with the actual invitation time)
-    const formattedTime = new Date().toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+  const renderInvitationItem = ({ item }: { item: Invitation }) => {
+    const avatarSource = item.room.image_url && item.room.image_url.trim() !== ''
+      ? item.room.image_url
+      : DEFAULT_AVATAR_URL;
 
     return (
       <ChatItem
-        id={item.room_id.toString()}
-        name={item.room_name}
-        message="Invitation received"
-        time={formattedTime}
+        id={item.invitation.id.toString()}
+        name={item.room.name}
+        message={`Invitation from ${item.room.name}`}
+        time={formatTime(item.invitation.created_at)}
         avatar={avatarSource}
-        hasRequest={true} // Indicating this is an invitation
+        hasRequest={true}
         onPress={() => {
-          // On press, set the selected chat and show the request modal
           setSelectedChat({
-            id: item.room_id,
-            name: item.room_name,
-            status: 'pending', // You can adjust this depending on your logic
-            type: 'group', // Adjust type as necessary
-            image_url: '',
-            total_members: 0,
-            created_by: item.sender_id,
-            joined_at: '',
+            id: item.room.id,
+            name: item.room.name,
+            status: 'pending',
+            type: item.room.type,
+            image_url: item.room.image_url,
+            total_members: item.room.total_members,
+            created_by: item.room.created_by,
+            joined_at: item.room.created_at,
             latest_message: null,
           });
           setShowRequestModal(true);
@@ -346,7 +364,8 @@ const Chat = () => {
               <FlatList
                 data={invitations}
                 renderItem={renderInvitationItem}
-                keyExtractor={(item) => item.room_id.toString()}
+                keyExtractor={(item) => item.room.id.toString()}
+
                 horizontal={true}
                 showsHorizontalScrollIndicator={false}
                 refreshControl={

@@ -5,7 +5,7 @@ import {
 //  BASE_URL
 } from '../constants/utils';
 
-const BASE_URL = 'http://192.168.0.114:5000/api/v1/'
+const BASE_URL = 'http://192.168.0.129:5001/api/v1/'
 
 /**
  * Registers a new user account using the provided payload.

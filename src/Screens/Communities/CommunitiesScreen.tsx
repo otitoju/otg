@@ -39,7 +39,7 @@ const CommunityScreen: React.FC = () => {
 
     useEffect(() => {
         // Initialize socket connection
-        const newSocket = io('http://192.168.0.114:5000');
+        const newSocket = io('http://192.168.0.129:5001');
         setSocket(newSocket);
 
         return () => {
@@ -106,7 +106,7 @@ const CommunityScreen: React.FC = () => {
         try {
             // Fetch Integrated Communities
             const integratedResponse = await axios.get(
-                `http://192.168.0.114:5000/api/v1/chat/user/${userId}/rooms`
+                `http://192.168.0.129:5001/api/v1/chat/user/${userId}/rooms`
             );
             const integratedMapped = integratedResponse.data.success ? integratedResponse.data.data.map((room: any) => ({
                 id: room.id,
@@ -122,7 +122,7 @@ const CommunityScreen: React.FC = () => {
             setIntegratedCommunities(integratedMapped);
 
             // Fetch Other Communities
-            const otherResponse = await axios.get('http://192.168.0.114:5000/api/v1/chat/rooms');
+            const otherResponse = await axios.get('http://192.168.0.129:5001/api/v1/chat/rooms');
             const otherMapped = otherResponse.data.success ? otherResponse.data.data
                 .map((room: any) => ({
                     id: room.id,
@@ -151,7 +151,7 @@ const CommunityScreen: React.FC = () => {
         setJoining(true);
         try {
             const response = await axios.post(
-                'http://192.168.0.114:5000/api/v1/chat/room/member/add',
+                'http://192.168.0.129:5001/api/v1/chat/room/member/add',
                 { room_id: roomId, user_id: userId }
             );
 
