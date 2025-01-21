@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -295,97 +295,138 @@ const ChatScreen: React.FC = () => {
   // Initialize socket connection
   useEffect(() => {
     if (senderId) {
+      console.log('Initializing socket connection for user:', senderId);
+
       const newSocket = io('http://192.168.0.129:5001', {
-        transports: ['websocket'],
-        query: {
-          userId: senderId
-        }
+        transports: ['websocket'], // Remove polling
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 60000,
+        query: { userId: senderId }
       });
 
-      // Socket connection events
-      newSocket.on('connect', () => {
-        console.log('Socket connected');
-        // Join the room
-        newSocket.emit('join_room', { room_id: roomId, user_id: senderId });
+      // Log all socket events for debugging
+      newSocket.onAny((event, ...args) => {
+        console.log('Socket event received:', event, args);
       });
+
+      // Handle connection events
+      newSocket.on('connect', () => {
+        console.log('Socket connected successfully, sending join_user event');
+        newSocket.emit('join_user', senderId);
+      });
+
+      newSocket.on('user_connected', (data) => {
+        console.log('Received user_connected confirmation:', data);
+      });
+
+
+      newSocket.on('room_joined', (data) => {
+        console.log('Successfully joined room:', data);
+      });
+
+  // Send message handler with enhanced error handling and logging
+  newSocket.on('new_message', async (messageData) => {
+    try {
+      const { room_id, sender_id, content, media_url } = messageData;
+      console.log('📨 Received message data:', { room_id, sender_id, content, media_url });
+
+      // Verify room membership
+      const isMember = await RoomMember.findOne({ where: { room_id, user_id: sender_id } });
+      if (!isMember) {
+        console.log(`❌ Unauthorized message attempt by user ${sender_id} in room ${room_id}`);
+        return socket.emit('error', { message: 'Not authorized to send messages in this room' });
+      }
+
+      // Create message in database
+      const message = await Chat.create({
+        room_id,
+        sender_id,
+        content,
+        media_url,
+        status: 'sent'
+      });
+
+      const messagePayload = {
+        id: message.id,
+        room_id: message.room_id,
+        sender_id: message.sender_id,
+        content: message.content,
+        media_url: message.media_url,
+        status: message.status,
+        timestamp: message.createdAt
+      };
+
+      console.log(`📤 Broadcasting message to room ${room_id}:`, messagePayload);
+
+      // Broadcast to all clients in the room, including sender
+      io.in(room_id.toString()).emit('new_message', messagePayload);
+      
+      console.log(`✅ Message ${message.id} successfully broadcasted to room ${room_id}`);
+    } catch (error) {
+      console.error('❌ Error in send_message:', error);
+      socket.emit('error', { message: 'Failed to send message. Please try again.' });
+    }
+  });
 
       newSocket.on('connect_error', (error) => {
         console.error('Socket connection error:', error);
-        setError('Failed to connect to chat server');
+        // Optionally show an error to the user
+        Alert.alert('Connection Error', 'Failed to connect to chat server. Retrying...');
       });
 
-      // Handle incoming messages
-      // Modified message handling to prevent duplicates
-      newSocket.on('new_message', (message) => {
-        // Check if this is a message we sent (has a temp_id)
-        const existingMessageIndex = messages.findIndex(msg =>
-          msg.id === message.temp_id || msg.id === message.id.toString()
-        );
-
-        const formattedMessage: Message = {
-          id: message.id.toString(),
-          content: message.content,
-          sender: parseInt(message.sender_id) === parseInt(senderId) ? 'user' : 'other',
-          timestamp: new Date(message.timestamp).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit'
-          }).toLowerCase(),
-          type: message.media_url ? 'image' : 'text',
-          fileUrl: message.media_url,
-          fileName: message.media_url?.split('/').pop(),
-          senderAvatar: parseInt(message.sender_id) === parseInt(senderId) ? null : message.sender_avatar,
-        };
-
-        setMessages(prev => {
-          if (existingMessageIndex !== -1) {
-            // Replace temporary message with server-confirmed message
-            const newMessages = [...prev];
-            newMessages[existingMessageIndex] = formattedMessage;
-            return newMessages;
-          } else {
-            // Add new message from other users
-            return [...prev, formattedMessage];
-          }
-        });
-
-        // Scroll to bottom when new message arrives
-        flatListRef.current?.scrollToEnd({ animated: true });
-      });
 
       // Handle typing indicators
-      newSocket.on('user_typing', ({ user_id }) => {
+      newSocket.on('typing_start', (data) => {
+        console.log('User typing event received:', data);
         setTypingUsers(prev => {
-          if (!prev.find(user => user.user_id === user_id)) {
-            return [...prev, { user_id }];
-          }
-          return prev;
+          const userExists = prev.some(user => user.user_id === data.user_id);
+          if (userExists) return prev;
+          return [...prev, { user_id: data.user_id, username: data.username }];
         });
       });
 
-      newSocket.on('user_stopped_typing', ({ user_id }) => {
-        setTypingUsers(prev => prev.filter(user => user.user_id !== user_id));
+      newSocket.on('user_stopped_typing', (data) => {
+        console.log('User stopped typing event received:', data);
+        setTypingUsers(prev => prev.filter(user => user.user_id !== data.user_id));
       });
 
-      // Handle message status updates
-      newSocket.on('message_status_update', ({ message_id, status }) => {
-        setMessages(prev => prev.map(msg =>
-          msg.id === message_id ? { ...msg, status } : msg
-        ));
+      // Handle errors
+      newSocket.on('error', (error) => {
+        console.error('Socket error:', error);
+        Alert.alert('Error', error.message || 'An error occurred');
+      });
+
+      newSocket.on('disconnect', (reason) => {
+        console.log('Socket disconnected:', reason);
+        if (reason === 'io server disconnect') {
+          // Server initiated disconnect, try reconnecting
+          newSocket.connect();
+        }
       });
 
       // Store socket instance
       setSocket(newSocket);
 
-      // Cleanup on unmount
+      // Cleanup
       return () => {
-        if (typingTimeoutRef.current) {
-          clearTimeout(typingTimeoutRef.current);
+        console.log('Cleaning up socket connection...');
+        if (newSocket) {
+          newSocket.disconnect();
         }
-        newSocket.emit('leave_room', { room_id: roomId, user_id: senderId });
-        newSocket.disconnect();
       };
     }
   }, [senderId, roomId]);
+
+  const debugMessages = (messages: Message[]) => {
+    console.log('Current messages state:', messages.map(msg => ({
+      id: msg.id,
+      content: msg.content,
+      sender: msg.sender
+    })));
+  };
+
 
   useEffect(() => {
     const fetchUserId = async () => {
@@ -446,7 +487,6 @@ const ChatScreen: React.FC = () => {
       throw error;
     }
   };
-
 
   const fetchRoomDetails = async () => {
     try {
@@ -566,37 +606,36 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-
   // Add loading state for uploads
   const [isUploading, setIsUploading] = useState(false);
 
-  const sendMessage = async (type: Message['type'], content: any = '') => {
+  const sendMessage = useCallback(async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
     if (!senderId || !socket) {
       setError('Unable to send message');
       return;
     }
 
-    const tempId = `temp-${Date.now()}`;
-    const timestamp = new Date().toISOString();
-
-    // Create message object for socket
     const messageData = {
       room_id: roomId,
       sender_id: senderId,
       content: type === 'text' ? inputText.trim() : '',
       media_url: type !== 'text' ? content.uri : null,
-      timestamp,
-      temp_id: tempId // Add temporary ID to track this message
+      timestamp: new Date().toISOString()
     };
 
+    console.log('Sending message:', messageData);
 
     setInputText('');
     Keyboard.dismiss();
 
-    // Emit message through socket
-    socket.emit('send_message', messageData);
-  };
+    try {
+      socket.emit('send_message', messageData);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      Alert.alert('Error', 'Failed to send message. Please try again.');
+    }
+  }, [inputText, senderId, socket, roomId]);
 
   // Handle typing indicator
   const handleTyping = () => {
@@ -719,6 +758,54 @@ const ChatScreen: React.FC = () => {
     );
   };
 
+  const MessageItem = React.memo(({ item, PLACEHOLDER_PROFILE }) => {
+    return (
+      <View style={styles.messageWrapper}>
+        <Text style={[
+          styles.timestamp,
+          item.sender === 'user' ? styles.timestampRight : styles.timestampLeft
+        ]}>
+          {item.timestamp}
+        </Text>
+        <View style={[
+          styles.messageContainer,
+          item.sender === 'user' ? styles.userMessage : styles.otherMessage
+        ]}>
+          {item.sender === 'other' && (
+            <Image
+              source={item.senderAvatar ? { uri: item.senderAvatar } : PLACEHOLDER_PROFILE}
+              style={styles.avatar}
+            />
+          )}
+          <View style={[
+            styles.messageBubble,
+            item.sender === 'user' ? styles.userBubble : styles.otherBubble
+          ]}>
+            {item.type === 'text' && (
+              <Text style={item.sender === 'user' ? styles.userMessageText : styles.otherMessageText}>
+                {item.content}
+              </Text>
+            )}
+            {item.type === 'image' && item.fileUrl && (
+              <Image
+                source={{ uri: item.fileUrl }}
+                style={styles.messageImage}
+                defaultSource={require('../../assets/images/Communities/people.svg')}
+              />
+            )}
+            {item.type === 'document' && item.fileName && (
+              <View style={styles.documentContainer}>
+                <Doc width={24} height={24} fill={COLORS.primary} />
+                <Text style={styles.documentText}>{item.fileName}</Text>
+              </View>
+            )}
+          </View>
+          {item.sender === 'user' && <Image source={PLACEHOLDER_PROFILE} style={styles.avatar} />}
+        </View>
+      </View>
+    );
+  });
+
   const renderMessage = ({ item }: { item: Message }) => (
     <View style={styles.messageWrapper}>
       <Text style={[
@@ -815,12 +902,35 @@ const ChatScreen: React.FC = () => {
         <FlatList
           ref={flatListRef}
           data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <MessageItem
+              item={item}
+              PLACEHOLDER_PROFILE={PLACEHOLDER_PROFILE}
+            />
+          )}
+          keyExtractor={item => item.id}
           contentContainerStyle={styles.messageList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => {
+            requestAnimationFrame(() => {
+              if (flatListRef.current) {
+                flatListRef.current.scrollToEnd({ animated: true });
+              }
+            });
+          }}
+          onLayout={() => {
+            requestAnimationFrame(() => {
+              if (flatListRef.current) {
+                flatListRef.current.scrollToEnd({ animated: true });
+              }
+            });
+          }}
           ListEmptyComponent={EmptyStateMessage}
           ListFooterComponent={renderTypingIndicator}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
+          initialNumToRender={10}
+          windowSize={10}
         />
       )}
 

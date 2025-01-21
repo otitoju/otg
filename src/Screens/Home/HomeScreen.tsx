@@ -67,7 +67,7 @@ const HomeScreen = () => {
   const bottomSheetRef = useRef<BottomSheet>(null);
   const [followers, setFollowers] = useState([]);
   const toast = useToast()
-
+  const [optimisticLikes, setOptimisticLikes] = useState<{ [key: string]: string[] }>({});
   const handleClosePress = () => bottomSheetRef?.current?.close();
   const handleOpenPress = () => bottomSheetRef?.current?.expand();
 
@@ -147,7 +147,7 @@ const HomeScreen = () => {
     GetAllPosts();
   }, []);
 
-  
+
 
   useFocusEffect(
     React.useCallback(() => {
@@ -159,17 +159,78 @@ const HomeScreen = () => {
   );
 
 
-  const handleLikePress = async (userId: any, postId: any) => {
+  const handleLikePress = async (userId: string, postId: string) => {
+    // Create a copy of the current posts
+    const updatedPosts = [...posts];
+
+    // Find the post to update
+    const postIndex = updatedPosts.findIndex(post => post.id === postId);
+    if (postIndex === -1) return;
+
+    // Get current likes array
+    const currentLikes = JSON.parse(updatedPosts[postIndex].likes || '[]');
+
+    // Check if user already liked the post
+    const userLikedIndex = currentLikes.indexOf(String(userId));
+
+    // Update likes optimistically
+    if (userLikedIndex === -1) {
+      currentLikes.push(String(userId));
+    } else {
+      currentLikes.splice(userLikedIndex, 1);
+    }
+
+    // Update the post with new likes
+    updatedPosts[postIndex] = {
+      ...updatedPosts[postIndex],
+      likes: JSON.stringify(currentLikes)
+    };
+
+    // Update UI immediately
+    setPosts(updatedPosts);
 
     try {
+      // Make API call
       const response = await ToggleLike(userId, postId);
-      const info = await GetPosts();
 
-      if (response) {
-        setPosts(info.info);
-      }
+      // Show success toast
+      toast.show(
+        userLikedIndex === -1 ? 'Post liked successfully' : 'Post unliked successfully',
+        {
+          type: 'success',
+          placement: 'top',
+          duration: 2000,
+        }
+      );
     } catch (error) {
-      console.log(error);
+      // Revert optimistic update on error
+      const revertedPosts = [...posts];
+      const revertedLikes = JSON.parse(revertedPosts[postIndex].likes || '[]');
+
+      if (userLikedIndex === -1) {
+        // Remove the like we added
+        const index = revertedLikes.indexOf(String(userId));
+        if (index > -1) {
+          revertedLikes.splice(index, 1);
+        }
+      } else {
+        // Add back the like we removed
+        revertedLikes.push(String(userId));
+      }
+
+      revertedPosts[postIndex] = {
+        ...revertedPosts[postIndex],
+        likes: JSON.stringify(revertedLikes)
+      };
+
+      setPosts(revertedPosts);
+
+      // Show error toast
+      toast.show('Failed to update like status', {
+        type: 'error',
+        placement: 'top',
+        duration: 3000,
+      });
     }
   };
 
@@ -177,7 +238,7 @@ const HomeScreen = () => {
     try {
       const loggedInUser: any = await AsyncStorage.getItem('user');
       let userId = JSON.parse(loggedInUser).user.id;
-     
+
       const info = await GetUserWithFollowers(userId);
 
       if (info) {
@@ -386,7 +447,7 @@ const HomeScreen = () => {
 
               // Check if the post creator's ID is in the list of followed users
               const isFollowed = followers.some((user: any) => user?.id === item?.user?.id);
-              
+
               return (
                 <View key={index}>
                   <View style={{ marginTop: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 15 }}>
@@ -422,19 +483,15 @@ const HomeScreen = () => {
                   )}
 
 
+
                   <View style={{ marginTop: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 15 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <TouchableOpacity onPress={async () => {
-                        await handleLikePress(currentUserId, item?.id)
-                      }}>
-                        {/* <HeartIcon width={18} height={18} /> */}
+                      <TouchableOpacity onPress={() => handleLikePress(currentUserId, item?.id)}>
                         {JSON.parse(item?.likes || '[]').includes(String(currentUserId)) ? (
                           <HeartIcon width={18} height={18} />
                         ) : (
                           <UnlikeIcon width={18} height={18} />
                         )}
-
-
                       </TouchableOpacity>
                       <Text style={{ color: COLORS.textPlaceholder, fontFamily: FONTS.RADIO_CANADA_REGULAR, marginLeft: 5 }}>{JSON.parse(item?.likes)?.length}</Text>
 
@@ -558,7 +615,7 @@ const HomeScreen = () => {
               </View>
             )
         }
-       
+
       </View>
 
 
