@@ -23,6 +23,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import axios from 'axios';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import io, { Socket } from 'socket.io-client';
+
 // Import SVG icons
 import Arrow from '../../assets/images/Communities/arrow-right.svg';
 import Plus from '../../assets/images/Communities/plus.svg';
@@ -255,6 +257,8 @@ const SidePanel: React.FC<{
 
 const PLACEHOLDER_PROFILE = require('../../assets/images/Communities/placeholder.png');
 const API_BASE_URL = 'http://192.168.0.129:5001/api/v1';
+const SOCKET_URL = 'http://192.168.0.129:5001';
+
 
 const ChatScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -287,6 +291,90 @@ const ChatScreen: React.FC = () => {
     })));
   };
 
+  useEffect(() => {
+    // Socket Connection Setup
+    const initializeSocket = async () => {
+      try {
+        const userData = await AsyncStorage.getItem('user');
+        if (!userData) {
+          console.error('No user data found');
+          return;
+        }
+
+        const parsedUser = JSON.parse(userData);
+        const userId = parsedUser.user.id;
+
+        const newSocket = io(SOCKET_URL, {
+          transports: ['websocket'],
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+        });
+
+        newSocket.on('connect', () => {
+          console.log('Socket connected successfully');
+          // Emit join_user event when connected
+          newSocket.emit('join_user', userId);
+        });
+
+        // Socket event handlers
+        newSocket.on('connect_error', (error) => {
+          console.error('Socket connection error:', error);
+        });
+
+        newSocket.on('new_message', (messageData) => {
+          // Only add message if it's for the current room
+          if (messageData.room_id === parseInt(roomId)) {
+            const formattedMessage: Message = {
+              id: messageData.id.toString(),
+              content: messageData.content,
+              sender: messageData.sender_id === senderId ? 'user' : 'other',
+              timestamp: new Date(messageData.timestamp).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+              }).toLowerCase(),
+              type: messageData.media_url ? 'image' : 'text',
+              fileUrl: messageData.media_url,
+              senderAvatar: messageData.sender_avatar,
+            };
+
+            setMessages(prevMessages => [...prevMessages, formattedMessage]);
+          }
+        });
+
+        // Typing indicators
+        newSocket.on('user_typing', (data) => {
+          if (data.user_id !== senderId) {
+            setTypingUsers(prev => 
+              prev.some(user => user.user_id === data.user_id) 
+                ? prev 
+                : [...prev, { user_id: data.user_id }]
+            );
+          }
+        });
+
+        newSocket.on('user_stopped_typing', (data) => {
+          setTypingUsers(prev => 
+            prev.filter(user => user.user_id !== data.user_id)
+          );
+        });
+
+        // Join room
+        newSocket.emit('join_room', { room_id: roomId, user_id: userId });
+
+        setSocket(newSocket);
+
+        // Cleanup on unmount
+        return () => {
+          newSocket.disconnect();
+        };
+      } catch (error) {
+        console.error('Socket initialization error:', error);
+      }
+    };
+
+    initializeSocket();
+  }, [roomId, senderId]);
 
   useEffect(() => {
     const fetchUserId = async () => {
@@ -475,11 +563,8 @@ const ChatScreen: React.FC = () => {
 
   const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
-    if (!senderId) {
-      setError('Please log in to send messages');
-      return;
-    }
-  
+    if (!senderId || !socket) return;
+
     const newMessage: Message = {
       id: Date.now().toString(),
       sender: 'user',
@@ -492,23 +577,18 @@ const ChatScreen: React.FC = () => {
       fileUrl: type !== 'text' ? content.uri : undefined,
       fileName: type === 'document' ? content.name : undefined,
     };
-  
+
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
     Keyboard.dismiss();
-  
+
     try {
-      const requestBody = {
-        room_id: parseInt(roomId), // Ensure room_id is a number
-        sender_id: senderId, // sender_id is already a string
-        content: newMessage.content || newMessage.fileName || '', // Use content or fileName for text or document
-        media_url: newMessage.fileUrl || null, // media_url for images
-      };
-  
-      await axios.post('http://192.168.0.129:5001/api/v1/chat/message/send', requestBody, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      // Emit message via socket instead of direct axios call
+      socket.emit('send_message', {
+        room_id: parseInt(roomId),
+        sender_id: senderId,
+        content: newMessage.content || newMessage.fileName || '',
+        media_url: newMessage.fileUrl || null,
       });
     } catch (error) {
       console.error('Error sending message:', error);
@@ -517,7 +597,7 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  // Handle typing indicator
+  // Modify typing handler to use socket
   const handleTyping = () => {
     if (!socket || !senderId) return;
 
@@ -533,6 +613,7 @@ const ChatScreen: React.FC = () => {
       socket.emit('typing_end', { room_id: roomId, user_id: senderId });
     }, 1500);
   };
+
 
   const EmptyStateMessage = () => (
     <View style={styles.emptyStateContainer}>
