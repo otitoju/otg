@@ -9,7 +9,6 @@ import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import LoadingDots from './../../Components/LoadingDots';
 import { useNavigation } from '@react-navigation/native';
 import InfoIcon from './../../assets/images/Profile/logout.svg';
-import { io } from 'socket.io-client';
 import { useFocusEffect } from '@react-navigation/native';
 
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
@@ -97,19 +96,6 @@ const Chat = () => {
     };
     fetchUserId();
   }, []);
-
-  useEffect(() => {
-    if (!currentUserId) return;
-
-    const socketConnection = io('http://192.168.0.129:5001'); // Replace with your socket server URL
-    socketConnection.emit('join_user', currentUserId);
-    setSocket(socketConnection);
-
-    return () => {
-      socketConnection.close();
-    };
-  }, [currentUserId]);
-
   // Fetch chat and invitations data
   const fetchChatsAndInvitations = useCallback(async () => {
     if (!currentUserId) return;

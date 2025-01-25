@@ -23,8 +23,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import axios from 'axios';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { io, Socket } from 'socket.io-client';
-
 // Import SVG icons
 import Arrow from '../../assets/images/Communities/arrow-right.svg';
 import Plus from '../../assets/images/Communities/plus.svg';
@@ -86,18 +84,6 @@ const SidePanel: React.FC<{
     }).start();
   }, [visible]);
 
-  useEffect(() => {
-    const handleLeaveRoom = () => {
-      onClose();
-      navigation.navigate('COMMUNITYSCREEN');
-    };
-
-    socket?.on('leave_room', handleLeaveRoom);
-
-    return () => {
-      socket?.off('leave_room', handleLeaveRoom);
-    };
-  }, [socket]);
 
   const handleLeaveGroup = async () => {
     try {
@@ -292,133 +278,7 @@ const ChatScreen: React.FC = () => {
 
   const { roomId } = route.params as { roomId: string };
 
-  // Initialize socket connection
-  useEffect(() => {
-    if (senderId) {
-      console.log('Initializing socket connection for user:', senderId);
-
-      const newSocket = io('http://192.168.0.129:5001', {
-        transports: ['websocket'], // Remove polling
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-        timeout: 60000,
-        query: { userId: senderId }
-      });
-
-      // Log all socket events for debugging
-      newSocket.onAny((event, ...args) => {
-        console.log('Socket event received:', event, args);
-      });
-
-      // Handle connection events
-      newSocket.on('connect', () => {
-        console.log('Socket connected successfully, sending join_user event');
-        newSocket.emit('join_user', senderId);
-      });
-
-      newSocket.on('user_connected', (data) => {
-        console.log('Received user_connected confirmation:', data);
-      });
-
-
-      newSocket.on('room_joined', (data) => {
-        console.log('Successfully joined room:', data);
-      });
-
-  // Send message handler with enhanced error handling and logging
-  newSocket.on('new_message', async (messageData) => {
-    try {
-      const { room_id, sender_id, content, media_url } = messageData;
-      console.log('📨 Received message data:', { room_id, sender_id, content, media_url });
-
-      // Verify room membership
-      const isMember = await RoomMember.findOne({ where: { room_id, user_id: sender_id } });
-      if (!isMember) {
-        console.log(`❌ Unauthorized message attempt by user ${sender_id} in room ${room_id}`);
-        return socket.emit('error', { message: 'Not authorized to send messages in this room' });
-      }
-
-      // Create message in database
-      const message = await Chat.create({
-        room_id,
-        sender_id,
-        content,
-        media_url,
-        status: 'sent'
-      });
-
-      const messagePayload = {
-        id: message.id,
-        room_id: message.room_id,
-        sender_id: message.sender_id,
-        content: message.content,
-        media_url: message.media_url,
-        status: message.status,
-        timestamp: message.createdAt
-      };
-
-      console.log(`📤 Broadcasting message to room ${room_id}:`, messagePayload);
-
-      // Broadcast to all clients in the room, including sender
-      io.in(room_id.toString()).emit('new_message', messagePayload);
-      
-      console.log(`✅ Message ${message.id} successfully broadcasted to room ${room_id}`);
-    } catch (error) {
-      console.error('❌ Error in send_message:', error);
-      socket.emit('error', { message: 'Failed to send message. Please try again.' });
-    }
-  });
-
-      newSocket.on('connect_error', (error) => {
-        console.error('Socket connection error:', error);
-        // Optionally show an error to the user
-        Alert.alert('Connection Error', 'Failed to connect to chat server. Retrying...');
-      });
-
-
-      // Handle typing indicators
-      newSocket.on('typing_start', (data) => {
-        console.log('User typing event received:', data);
-        setTypingUsers(prev => {
-          const userExists = prev.some(user => user.user_id === data.user_id);
-          if (userExists) return prev;
-          return [...prev, { user_id: data.user_id, username: data.username }];
-        });
-      });
-
-      newSocket.on('user_stopped_typing', (data) => {
-        console.log('User stopped typing event received:', data);
-        setTypingUsers(prev => prev.filter(user => user.user_id !== data.user_id));
-      });
-
-      // Handle errors
-      newSocket.on('error', (error) => {
-        console.error('Socket error:', error);
-        Alert.alert('Error', error.message || 'An error occurred');
-      });
-
-      newSocket.on('disconnect', (reason) => {
-        console.log('Socket disconnected:', reason);
-        if (reason === 'io server disconnect') {
-          // Server initiated disconnect, try reconnecting
-          newSocket.connect();
-        }
-      });
-
-      // Store socket instance
-      setSocket(newSocket);
-
-      // Cleanup
-      return () => {
-        console.log('Cleaning up socket connection...');
-        if (newSocket) {
-          newSocket.disconnect();
-        }
-      };
-    }
-  }, [senderId, roomId]);
-
+  
   const debugMessages = (messages: Message[]) => {
     console.log('Current messages state:', messages.map(msg => ({
       id: msg.id,
@@ -541,29 +401,29 @@ const ChatScreen: React.FC = () => {
         mediaType: 'photo',
         quality: 1,
       });
-
+  
       if (result.assets?.[0]) {
         const image = result.assets[0];
-
+  
         // Create form data
         const formData = new FormData();
-        formData.append('room_id', roomId);
-        formData.append('sender_id', senderId);
+        formData.append('room_id', roomId); // Ensure roomId is a number or string
+        formData.append('sender_id', senderId); // Ensure senderId is a string
         formData.append('content', ''); // Empty content for image messages
-
+  
         // Append the image file
         formData.append('media', {
           uri: image.uri,
-          type: image.type || 'image/jpeg',
-          name: image.fileName || 'image.jpg',
+          type: image.type || 'image/jpeg', // Default to 'image/jpeg' if type is not provided
+          name: image.fileName || 'image.jpg', // Default to 'image.jpg' if fileName is not provided
         });
-
+  
         // Show loading state
         setIsUploading(true);
-
+  
         try {
           const response = await axios.post(
-            `${API_BASE_URL}/chat/message/send`,
+            'http://192.168.0.129:5001/api/v1/chat/message/send', // Use the correct endpoint
             formData,
             {
               headers: {
@@ -571,21 +431,25 @@ const ChatScreen: React.FC = () => {
               },
             }
           );
-
+  
           if (response.data.success) {
-            // Emit the message through socket after successful upload
-            const messageData = {
-              room_id: roomId,
-              sender_id: senderId,
+            // Add the message to the local state
+            const newMessage: Message = {
+              id: Date.now().toString(),
+              sender: 'user',
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              }).toLowerCase(),
+              type: 'image',
               content: '', // Content is empty for images
-              media_url: response.data.data.media_url, // Use uploaded image URL from the server
-              timestamp: new Date().toISOString(),
+              fileUrl: response.data.data.media_url, // Use the uploaded image URL from the server
             };
-
-            // Emit message through socket
-            socket.emit('send_message', messageData);
-
+  
+            setMessages((prev) => [...prev, newMessage]);
             console.log('Image uploaded and message sent successfully');
+          } else {
+            throw new Error('Failed to upload image');
           }
         } catch (error) {
           console.error('Error uploading image:', error);
@@ -609,33 +473,49 @@ const ChatScreen: React.FC = () => {
   // Add loading state for uploads
   const [isUploading, setIsUploading] = useState(false);
 
-  const sendMessage = useCallback(async (type: Message['type'], content: any = '') => {
+  const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
-    if (!senderId || !socket) {
-      setError('Unable to send message');
+    if (!senderId) {
+      setError('Please log in to send messages');
       return;
     }
-
-    const messageData = {
-      room_id: roomId,
-      sender_id: senderId,
+  
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      sender: 'user',
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      }).toLowerCase(),
+      type,
       content: type === 'text' ? inputText.trim() : '',
-      media_url: type !== 'text' ? content.uri : null,
-      timestamp: new Date().toISOString()
+      fileUrl: type !== 'text' ? content.uri : undefined,
+      fileName: type === 'document' ? content.name : undefined,
     };
-
-    console.log('Sending message:', messageData);
-
+  
+    setMessages(prev => [...prev, newMessage]);
     setInputText('');
     Keyboard.dismiss();
-
+  
     try {
-      socket.emit('send_message', messageData);
+      const requestBody = {
+        room_id: parseInt(roomId), // Ensure room_id is a number
+        sender_id: senderId, // sender_id is already a string
+        content: newMessage.content || newMessage.fileName || '', // Use content or fileName for text or document
+        media_url: newMessage.fileUrl || null, // media_url for images
+      };
+  
+      await axios.post('http://192.168.0.129:5001/api/v1/chat/message/send', requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
     } catch (error) {
       console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message. Please try again.');
+      setMessages(prev => prev.filter(msg => msg.id !== newMessage.id));
+      setError('Failed to send message');
     }
-  }, [inputText, senderId, socket, roomId]);
+  };
 
   // Handle typing indicator
   const handleTyping = () => {
@@ -652,22 +532,6 @@ const ChatScreen: React.FC = () => {
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit('typing_end', { room_id: roomId, user_id: senderId });
     }, 1500);
-  };
-
-  const selectDocument = async () => {
-    try {
-      const result = await DocumentPicker.pick({
-        type: [DocumentPicker.types.allFiles]
-      });
-      if (result[0]) {
-        sendMessage('document', result[0]);
-      }
-    } catch (err) {
-      if (!DocumentPicker.isCancel(err)) {
-        console.error('Error picking document:', err);
-        setError('Failed to select document');
-      }
-    }
   };
 
   const EmptyStateMessage = () => (
