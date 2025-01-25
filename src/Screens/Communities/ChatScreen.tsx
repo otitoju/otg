@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import axios from 'axios';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import io, { Socket } from 'socket.io-client';
 
 // Import SVG icons
 import Arrow from '../../assets/images/Communities/arrow-right.svg';
@@ -31,6 +32,12 @@ import Camera from '../../assets/images/Communities/Camera.svg';
 import Doc from '../../assets/images/Communities/docs.svg';
 
 // Types
+// Add socket-related types
+interface TypingUser {
+  user_id: string;
+  username?: string;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -66,7 +73,9 @@ const SidePanel: React.FC<{
   onClose: () => void;
   roomDetails: RoomDetails | null;
   roomUsers: RoomUsers | null;
-}> = ({ visible, onClose, roomDetails, roomUsers }) => {
+  socket: Socket | null;
+  navigation: any;
+}> = ({ visible, onClose, roomDetails, roomUsers, socket, navigation }) => {
   const slideAnim = useRef(new RNAnimated.Value(-300)).current;
 
   useEffect(() => {
@@ -77,11 +86,10 @@ const SidePanel: React.FC<{
     }).start();
   }, [visible]);
 
+
   const handleLeaveGroup = async () => {
     try {
-      console.log('Initiating leave group process...');
-      
-      // Validate user ID
+
       const userId = await AsyncStorage.getItem('user');
       if (!userId) {
         console.error('User not logged in.');
@@ -95,53 +103,91 @@ const SidePanel: React.FC<{
         Alert.alert('Error', 'Unable to retrieve user information.');
         return;
       }
-      console.log(`User ID retrieved: ${userIdValue}`);
-      
-      // Validate room ID
+
       const roomId = roomDetails?.id;
       if (!roomId) {
         console.error('Invalid room ID.');
         Alert.alert('Error', 'Room information is missing. Please try again.');
         return;
       }
-      console.log(`Room ID: ${roomId}`);
-  
-      // Log request data
-      const requestData = { room_id: roomId, user_id: userIdValue };
-      console.log('Request Data:', requestData);
-  
-      // Make DELETE request
-      const response = await axios.delete(
-        'https://api.onthegoafrica.com/api/v1/chat/room/member/remove',
-        {
-          data: requestData, // DELETE requests pass data here
-          headers: {
-            'Content-Type': 'application/json',
+
+      Alert.alert(
+        'Leave Group',
+        'Are you sure you want to leave this group?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
           },
-        }
+          {
+            text: 'Leave',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const response = await axios.delete(
+                  'http://192.168.0.129:5001/api/v1/chat/room/member/remove',
+                  {
+                    data: { room_id: roomId, user_id: userIdValue },
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                  }
+                );
+
+                if (response.status === 200) {
+
+                  if (socket) {
+                    // Emit a custom event for group leave
+                    socket.emit('group_left', {
+                      room_id: roomId,
+                      user_id: userIdValue,
+                      timestamp: new Date().toISOString(),
+                      type: 'leave' // Add type for better event handling
+                    });
+
+                    // Also emit the original leave_room event
+                    socket.emit('leave_room', {
+                      room_id: roomId,
+                      user_id: userIdValue
+                    });
+                  }
+
+                  onClose();
+
+                  Alert.alert(
+                    'Success',
+                    'You have successfully left the group.',
+                    [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          navigation.goBack();
+
+                        }
+                      }
+                    ]
+                  );
+                }
+              } catch (error) {
+                if (axios.isAxiosError(error)) {
+                  console.error('Network or server error:', error.response || error.message);
+                  const serverMessage = error.response?.data?.message || 'An error occurred on the server.';
+                  Alert.alert('Error', serverMessage);
+                } else {
+                  console.error('Unexpected error:', error.message);
+                  Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+                }
+              }
+            }
+          }
+        ]
       );
-  
-      if (response.status === 200) {
-        console.log('Leave group successful:', response.data);
-        Alert.alert('Success', 'You have successfully left the group.');
-        onClose(); // Close the side panel
-      } else {
-        console.error('Failed to leave group. Response:', response.data);
-        Alert.alert('Error', response.data.message || 'Failed to leave the group.');
-      }
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error('Network or server error:', error.response || error.message);
-        const serverMessage = error.response?.data?.message || 'An error occurred on the server.';
-        Alert.alert('Error', serverMessage);
-      } else {
-        console.error('Unexpected error:', error.message);
-        Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-      }
+      console.error('Error in handleLeaveGroup:', error);
+      Alert.alert('Error', 'Failed to process leave group request. Please try again.');
     }
   };
-  
-  
+
 
   const renderMember = ({ item }: { item: RoomUser }) => (
     <View style={styles.memberItem}>
@@ -182,6 +228,9 @@ const SidePanel: React.FC<{
             <Image
               source={roomDetails?.image_url ? { uri: roomDetails.image_url } : PLACEHOLDER_PROFILE}
               style={styles.groupAvatar}
+              navigation={navigation}
+              navigation={navigation}
+              navigation={navigation}
             />
             <Text style={styles.groupName}>{roomDetails?.name || 'Chat Room'}</Text>
             <Text style={styles.memberCount}>
@@ -207,7 +256,9 @@ const SidePanel: React.FC<{
 
 
 const PLACEHOLDER_PROFILE = require('../../assets/images/Communities/placeholder.png');
-const API_BASE_URL = 'https://api.onthegoafrica.com/api/v1';
+const API_BASE_URL = 'http://192.168.0.129:5001/api/v1';
+const SOCKET_URL = 'http://192.168.0.129:5001';
+
 
 const ChatScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -221,8 +272,109 @@ const ChatScreen: React.FC = () => {
   const [sidePanelVisible, setSidePanelVisible] = useState(false);
   const [roomUsers, setRoomUsers] = useState<RoomUsers | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+
+
+
 
   const { roomId } = route.params as { roomId: string };
+
+  
+  const debugMessages = (messages: Message[]) => {
+    console.log('Current messages state:', messages.map(msg => ({
+      id: msg.id,
+      content: msg.content,
+      sender: msg.sender
+    })));
+  };
+
+  useEffect(() => {
+    // Socket Connection Setup
+    const initializeSocket = async () => {
+      try {
+        const userData = await AsyncStorage.getItem('user');
+        if (!userData) {
+          console.error('No user data found');
+          return;
+        }
+
+        const parsedUser = JSON.parse(userData);
+        const userId = parsedUser.user.id;
+
+        const newSocket = io(SOCKET_URL, {
+          transports: ['websocket'],
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+        });
+
+        newSocket.on('connect', () => {
+          console.log('Socket connected successfully');
+          // Emit join_user event when connected
+          newSocket.emit('join_user', userId);
+        });
+
+        // Socket event handlers
+        newSocket.on('connect_error', (error) => {
+          console.error('Socket connection error:', error);
+        });
+
+        newSocket.on('new_message', (messageData) => {
+          // Only add message if it's for the current room
+          if (messageData.room_id === parseInt(roomId)) {
+            const formattedMessage: Message = {
+              id: messageData.id.toString(),
+              content: messageData.content,
+              sender: messageData.sender_id === senderId ? 'user' : 'other',
+              timestamp: new Date(messageData.timestamp).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+              }).toLowerCase(),
+              type: messageData.media_url ? 'image' : 'text',
+              fileUrl: messageData.media_url,
+              senderAvatar: messageData.sender_avatar,
+            };
+
+            setMessages(prevMessages => [...prevMessages, formattedMessage]);
+          }
+        });
+
+        // Typing indicators
+        newSocket.on('user_typing', (data) => {
+          if (data.user_id !== senderId) {
+            setTypingUsers(prev => 
+              prev.some(user => user.user_id === data.user_id) 
+                ? prev 
+                : [...prev, { user_id: data.user_id }]
+            );
+          }
+        });
+
+        newSocket.on('user_stopped_typing', (data) => {
+          setTypingUsers(prev => 
+            prev.filter(user => user.user_id !== data.user_id)
+          );
+        });
+
+        // Join room
+        newSocket.emit('join_room', { room_id: roomId, user_id: userId });
+
+        setSocket(newSocket);
+
+        // Cleanup on unmount
+        return () => {
+          newSocket.disconnect();
+        };
+      } catch (error) {
+        console.error('Socket initialization error:', error);
+      }
+    };
+
+    initializeSocket();
+  }, [roomId, senderId]);
 
   useEffect(() => {
     const fetchUserId = async () => {
@@ -284,7 +436,6 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-
   const fetchRoomDetails = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/chat/room/${roomId}`);
@@ -332,12 +483,87 @@ const ChatScreen: React.FC = () => {
     }
   };
 
+  const selectImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibrary({
+        mediaType: 'photo',
+        quality: 1,
+      });
+  
+      if (result.assets?.[0]) {
+        const image = result.assets[0];
+  
+        // Create form data
+        const formData = new FormData();
+        formData.append('room_id', roomId); // Ensure roomId is a number or string
+        formData.append('sender_id', senderId); // Ensure senderId is a string
+        formData.append('content', ''); // Empty content for image messages
+  
+        // Append the image file
+        formData.append('media', {
+          uri: image.uri,
+          type: image.type || 'image/jpeg', // Default to 'image/jpeg' if type is not provided
+          name: image.fileName || 'image.jpg', // Default to 'image.jpg' if fileName is not provided
+        });
+  
+        // Show loading state
+        setIsUploading(true);
+  
+        try {
+          const response = await axios.post(
+            'http://192.168.0.129:5001/api/v1/chat/message/send', // Use the correct endpoint
+            formData,
+            {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+              },
+            }
+          );
+  
+          if (response.data.success) {
+            // Add the message to the local state
+            const newMessage: Message = {
+              id: Date.now().toString(),
+              sender: 'user',
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              }).toLowerCase(),
+              type: 'image',
+              content: '', // Content is empty for images
+              fileUrl: response.data.data.media_url, // Use the uploaded image URL from the server
+            };
+  
+            setMessages((prev) => [...prev, newMessage]);
+            console.log('Image uploaded and message sent successfully');
+          } else {
+            throw new Error('Failed to upload image');
+          }
+        } catch (error) {
+          console.error('Error uploading image:', error);
+          Alert.alert(
+            'Error',
+            'Failed to send image. Please try again.'
+          );
+        } finally {
+          setIsUploading(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error selecting image:', error);
+      Alert.alert(
+        'Error',
+        'Failed to select image. Please try again.'
+      );
+    }
+  };
+
+  // Add loading state for uploads
+  const [isUploading, setIsUploading] = useState(false);
+
   const sendMessage = async (type: Message['type'], content: any = '') => {
     if (type === 'text' && !inputText.trim()) return;
-    if (!senderId) {
-      setError('Please log in to send messages');
-      return;
-    }
+    if (!senderId || !socket) return;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -357,10 +583,11 @@ const ChatScreen: React.FC = () => {
     Keyboard.dismiss();
 
     try {
-      await axios.post(`${API_BASE_URL}/chat/message/send`, {
-        room_id: roomId,
+      // Emit message via socket instead of direct axios call
+      socket.emit('send_message', {
+        room_id: parseInt(roomId),
         sender_id: senderId,
-        content: newMessage.content || newMessage.fileUrl || newMessage.fileName,
+        content: newMessage.content || newMessage.fileName || '',
         media_url: newMessage.fileUrl || null,
       });
     } catch (error) {
@@ -370,36 +597,23 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  const selectImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibrary({
-        mediaType: 'photo',
-        quality: 1
-      });
-      if (result.assets?.[0]) {
-        sendMessage('image', result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error selecting image:', error);
-      setError('Failed to select image');
+  // Modify typing handler to use socket
+  const handleTyping = () => {
+    if (!socket || !senderId) return;
+
+    socket.emit('typing_start', { room_id: roomId, user_id: senderId });
+
+    // Clear existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
+
+    // Set new timeout
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('typing_end', { room_id: roomId, user_id: senderId });
+    }, 1500);
   };
 
-  const selectDocument = async () => {
-    try {
-      const result = await DocumentPicker.pick({
-        type: [DocumentPicker.types.allFiles]
-      });
-      if (result[0]) {
-        sendMessage('document', result[0]);
-      }
-    } catch (err) {
-      if (!DocumentPicker.isCancel(err)) {
-        console.error('Error picking document:', err);
-        setError('Failed to select document');
-      }
-    }
-  };
 
   const EmptyStateMessage = () => (
     <View style={styles.emptyStateContainer}>
@@ -431,6 +645,111 @@ const ChatScreen: React.FC = () => {
       </TouchableOpacity>
     </View>
   );
+
+  const renderInput = () => (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.inputContainer}
+    >
+      {isUploading ? (
+        <View style={styles.uploadingContainer}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={styles.uploadingText}>Sending image...</Text>
+        </View>
+      ) : (
+        <>
+          {/* <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
+            <Plus width={24} height={24} fill={COLORS.primary} />
+          </TouchableOpacity> */}
+          <TextInput
+            style={styles.input}
+            value={inputText}
+            onChangeText={(text) => {
+              setInputText(text);
+              handleTyping();
+            }}
+            placeholder="Type a message"
+            placeholderTextColor={COLORS.textPlaceholder}
+          />
+          <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
+            <Camera width={24} height={24} fill={COLORS.white} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => sendMessage('text')}
+            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+            disabled={!inputText.trim()}
+          >
+            <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
+              Send
+            </Text>
+          </TouchableOpacity>
+        </>
+      )}
+    </KeyboardAvoidingView>
+  );
+
+  // Add typing indicator component
+  const renderTypingIndicator = () => {
+    if (typingUsers.length === 0) return null;
+
+    return (
+      <View style={styles.typingIndicator}>
+        <Text style={styles.typingText}>
+          {typingUsers.length === 1
+            ? 'Someone is typing...'
+            : `${typingUsers.length} people are typing...`}
+        </Text>
+      </View>
+    );
+  };
+
+  const MessageItem = React.memo(({ item, PLACEHOLDER_PROFILE }) => {
+    return (
+      <View style={styles.messageWrapper}>
+        <Text style={[
+          styles.timestamp,
+          item.sender === 'user' ? styles.timestampRight : styles.timestampLeft
+        ]}>
+          {item.timestamp}
+        </Text>
+        <View style={[
+          styles.messageContainer,
+          item.sender === 'user' ? styles.userMessage : styles.otherMessage
+        ]}>
+          {item.sender === 'other' && (
+            <Image
+              source={item.senderAvatar ? { uri: item.senderAvatar } : PLACEHOLDER_PROFILE}
+              style={styles.avatar}
+            />
+          )}
+          <View style={[
+            styles.messageBubble,
+            item.sender === 'user' ? styles.userBubble : styles.otherBubble
+          ]}>
+            {item.type === 'text' && (
+              <Text style={item.sender === 'user' ? styles.userMessageText : styles.otherMessageText}>
+                {item.content}
+              </Text>
+            )}
+            {item.type === 'image' && item.fileUrl && (
+              <Image
+                source={{ uri: item.fileUrl }}
+                style={styles.messageImage}
+                defaultSource={require('../../assets/images/Communities/people.svg')}
+              />
+            )}
+            {item.type === 'document' && item.fileName && (
+              <View style={styles.documentContainer}>
+                <Doc width={24} height={24} fill={COLORS.primary} />
+                <Text style={styles.documentText}>{item.fileName}</Text>
+              </View>
+            )}
+          </View>
+          {item.sender === 'user' && <Image source={PLACEHOLDER_PROFILE} style={styles.avatar} />}
+        </View>
+      </View>
+    );
+  });
 
   const renderMessage = ({ item }: { item: Message }) => (
     <View style={styles.messageWrapper}>
@@ -494,9 +813,11 @@ const ChatScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        {/* <TouchableOpacity onPress={() => navigation.navigate('CHAT')} style={styles.backButton}> */}
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Arrow width={24} height={24} fill={COLORS.white} />
         </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.headerContent}
           onPress={() => setSidePanelVisible(true)}
@@ -511,12 +832,13 @@ const ChatScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </View>
-
       <SidePanel
+        socket={socket}
         visible={sidePanelVisible}
         onClose={() => setSidePanelVisible(false)}
         roomDetails={roomDetails}
         roomUsers={roomUsers}
+        navigation={navigation}
       />
 
       {messages.length === 0 ? (
@@ -525,50 +847,75 @@ const ChatScreen: React.FC = () => {
         <FlatList
           ref={flatListRef}
           data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <MessageItem
+              item={item}
+              PLACEHOLDER_PROFILE={PLACEHOLDER_PROFILE}
+            />
+          )}
+          keyExtractor={item => item.id}
           contentContainerStyle={styles.messageList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => {
+            requestAnimationFrame(() => {
+              if (flatListRef.current) {
+                flatListRef.current.scrollToEnd({ animated: true });
+              }
+            });
+          }}
+          onLayout={() => {
+            requestAnimationFrame(() => {
+              if (flatListRef.current) {
+                flatListRef.current.scrollToEnd({ animated: true });
+              }
+            });
+          }}
+          ListEmptyComponent={EmptyStateMessage}
+          ListFooterComponent={renderTypingIndicator}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
+          initialNumToRender={10}
+          windowSize={10}
         />
       )}
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputContainer}
-      >
-        <TouchableOpacity onPress={selectDocument} style={styles.addButton}>
-          <Plus width={24} height={24} fill={COLORS.primary} />
-        </TouchableOpacity>
-        <TextInput
-          style={styles.input}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Type a message"
-          placeholderTextColor={COLORS.textPlaceholder}
-        />
-        <TouchableOpacity onPress={selectImage} style={styles.sendButton}>
-          <Camera width={24} height={24} fill={COLORS.white} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => sendMessage('text')}
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-          disabled={!inputText.trim()}
-        >
-          <Text style={[styles.sendButtonText, !inputText.trim() && styles.sendButtonTextDisabled]}>
-            Send
-          </Text>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+
+      {renderInput()}
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  uploadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    paddingVertical: SIZES.small,
+  },
+  uploadingText: {
+    marginLeft: SIZES.small,
+    fontFamily: FONTS.RADIO_CANADA_MEDIUM,
+    color: COLORS.textColor,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.lightBg,
+  },
+  typingIndicator: {
+    padding: SIZES.small,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    marginHorizontal: SIZES.medium,
+    marginVertical: SIZES.small,
+    borderRadius: SIZES.small,
+  },
+  typingText: {
+    fontFamily: FONTS.RADIO_CANADA_REGULAR,
+    fontSize: SIZES.small,
+    color: COLORS.textColor,
+    fontStyle: 'italic',
   },
   loadingText: {
     marginTop: SIZES.medium,

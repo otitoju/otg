@@ -1,6 +1,5 @@
-// Chat.tsx
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl, StatusBar, Platform } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, RefreshControl, StatusBar } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import ChatItem from './../../Components/ChatItem';
@@ -10,11 +9,10 @@ import FONTS, { COLORS, SIZES } from '../../constants/theme';
 import LoadingDots from './../../Components/LoadingDots';
 import { useNavigation } from '@react-navigation/native';
 import InfoIcon from './../../assets/images/Profile/logout.svg';
+import { useFocusEffect } from '@react-navigation/native';
 
-// Constants
 const DEFAULT_AVATAR_URL = 'https://yourapp.com/default-avatar.png'; // Replace with your default avatar
-const API_BASE_URL = 'https://api.onthegoafrica.com/api/v1';
-const REFRESH_INTERVAL = 60000; // 1 minute in milliseconds
+const API_BASE_URL = 'http://192.168.0.129:5001/api/v1';
 
 interface ChatRoom {
   id: number;
@@ -43,22 +41,51 @@ interface ApiResponse {
   };
 }
 
+interface Invitation {
+  invitation: {
+    id: number;
+    inviter_id: number;
+    created_at: string;
+    updated_at: string;
+  };
+  room: {
+    id: number;
+    name: string;
+    type: string;
+    description: string;
+    image_url: string;
+    status: string;
+    total_members: number;
+    created_by: string;
+    members: Array<{ user_id: string }>;
+    created_at: string;
+    updated_at: string;
+  };
+}
+
+interface InvitationResponse {
+  success: boolean;
+  data: Invitation[];
+}
+
 const Chat = () => {
   const navigation = useNavigation();
   const [chats, setChats] = useState<ChatRoom[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedChat, setSelectedChat] = useState<ChatRoom | null>(null);
+  const [socket, setSocket] = useState<any>(null);
 
+  // Initialize socket connection
   useEffect(() => {
     const fetchUserId = async () => {
       try {
         const loggedInUser = await AsyncStorage.getItem('user');
         if (!loggedInUser) throw new Error('No user found');
-        
         const parsedUser = JSON.parse(loggedInUser);
         const extractedUserId = parsedUser.user.id;
         setCurrentUserId(extractedUserId);
@@ -67,51 +94,78 @@ const Chat = () => {
         setError('Failed to retrieve user information');
       }
     };
-
     fetchUserId();
   }, []);
-
-  useEffect(() => {
-    if (currentUserId) {
-      fetchChats();
-      const interval = setInterval(fetchChats, REFRESH_INTERVAL);
-      return () => clearInterval(interval);
-    }
-  }, [currentUserId]);
-
-  const fetchChats = async () => {
+  // Fetch chat and invitations data
+  const fetchChatsAndInvitations = useCallback(async () => {
     if (!currentUserId) return;
 
     try {
       setLoading(true);
-      const response = await axios.get<ApiResponse>(`${API_BASE_URL}/chat/conversations`, {
-        params: { user_id: currentUserId },
-      });
+      const [chatsResponse, invitationsResponse] = await Promise.all([
+        axios.get<ApiResponse>(`${API_BASE_URL}/chat/conversations`, {
+          params: { user_id: currentUserId },
+        }),
+        axios.get<InvitationResponse>(`${API_BASE_URL}/chat/user/${currentUserId}/invitations`),
+      ]);
 
-      if (response.data.success) {
-        setChats(response.data.data.rooms);
-        setError(null);
+      if (chatsResponse.data.success) {
+        setChats(chatsResponse.data.data.rooms);
       } else {
         setError('Failed to fetch chats');
       }
+
+      if (invitationsResponse.data.success) {
+        setInvitations(invitationsResponse.data.data);
+      } else {
+        setError('Failed to fetch invitations');
+      }
     } catch (err) {
       setError('Error connecting to the server');
-      console.error('Error fetching chats:', err);
+      console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [currentUserId]);
 
+  useEffect(() => {
+    fetchChatsAndInvitations();
+  }, [currentUserId]);
+
+  // Re-fetch chats and invitations on focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchChatsAndInvitations();
+    }, [fetchChatsAndInvitations])
+  );
+
+  // Socket event listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRoomEvent = async () => {
+      await fetchChatsAndInvitations();
+    };
+
+    socket.on('group_joined', handleRoomEvent);
+    socket.on('group_left', handleRoomEvent);
+    socket.on('member_joined', handleRoomEvent);
+
+    return () => {
+      socket.off('group_joined', handleRoomEvent);
+      socket.off('group_left', handleRoomEvent);
+      socket.off('member_joined', handleRoomEvent);
+    };
+  }, [socket, fetchChatsAndInvitations]);
+
+  // Handle chat refresh
   const handleRefresh = () => {
-    if (!currentUserId) return;
     setRefreshing(true);
-    fetchChats();
+    fetchChatsAndInvitations();
   };
 
   const handleChatPress = (chat: ChatRoom) => {
-    if (!currentUserId) return;
-
     if (chat.status === 'pending') {
       setSelectedChat(chat);
       setShowRequestModal(true);
@@ -126,24 +180,57 @@ const Chat = () => {
   };
 
   const handleAcceptRequest = async () => {
-    if (!selectedChat || !currentUserId) return;
+    if (!selectedChat || !currentUserId || !socket) {
+      console.log('handleAcceptRequest: Missing required data.');
+      return;
+    }
+
+    const apiUrl = `${API_BASE_URL}/chat/room/member/add`;
+    const payload = {
+      room_id: selectedChat.id,
+      user_id: currentUserId.toString(),
+      is_invite_acceptance: true  // Added this flag
+    };
 
     try {
-      // Assuming you have an API endpoint to accept chat requests
-      await axios.post(`${API_BASE_URL}/chat/accept-request`, {
-        room_id: selectedChat.id,
-        user_id: currentUserId,
-      });
+      console.log('handleAcceptRequest: Preparing to accept request for chat room', selectedChat.id);
+      console.log('handleAcceptRequest: API URL:', apiUrl);
+      console.log('handleAcceptRequest: Payload:', JSON.stringify(payload, null, 2));
+
+      const response = await axios.post(apiUrl, payload);
+
+      console.log('handleAcceptRequest: API response:', response.data);
+
+      socket.emit('group_joined', payload);
+      console.log('handleAcceptRequest: Socket event emitted for user joining room', selectedChat.id);
 
       setChats((prevChats) =>
         prevChats.map((chat) =>
           chat.id === selectedChat.id ? { ...chat, status: 'accepted' } : chat
         )
       );
+
+      console.log('handleAcceptRequest: Chat room status updated to "accepted" for room', selectedChat.id);
     } catch (error) {
-      console.error('Error accepting request:', error);
-      setError('Failed to accept chat request');
+      if (error.response) {
+        const { status, data } = error.response;
+
+        console.error('handleAcceptRequest: Axios error response:', error.response);
+
+        if (status === 400 && data.message === 'User is already a member of the room') {
+          console.log('handleAcceptRequest: User is already a member of the room. No further action needed.');
+          // Optionally, update UI to reflect this state
+        } else {
+          console.error('handleAcceptRequest: Unexpected error:', data.message);
+          setError(data.message || 'Failed to accept chat request');
+        }
+      } else if (error.request) {
+        console.error('handleAcceptRequest: Axios error request:', error.request);
+      } else {
+        console.error('handleAcceptRequest: General error:', error.message);
+      }
     } finally {
+      console.log('handleAcceptRequest: Finalizing request acceptance.');
       setShowRequestModal(false);
       setSelectedChat(null);
     }
@@ -153,7 +240,6 @@ const Chat = () => {
     if (!selectedChat || !currentUserId) return;
 
     try {
-      // Assuming you have an API endpoint to decline chat requests
       await axios.post(`${API_BASE_URL}/chat/decline-request`, {
         room_id: selectedChat.id,
         user_id: currentUserId,
@@ -185,14 +271,16 @@ const Chat = () => {
   };
 
   const renderChatItem = ({ item }: { item: ChatRoom }) => {
-    // Validate and prepare image URL
-    const avatarSource = item.image_url && item.image_url.trim() !== '' 
-      ? item.image_url 
+    const avatarSource = item.image_url && item.image_url.trim() !== ''
+      ? item.image_url
       : DEFAULT_AVATAR_URL;
+
+    // Add null check for id
+    const itemId = item.id?.toString() || String(Math.random());
 
     return (
       <ChatItem
-        id={item.id.toString()}
+        id={itemId}
         name={item.name}
         message={item.latest_message?.content || 'No messages yet'}
         time={item.latest_message ? formatTime(item.latest_message.timestamp) : formatTime(item.joined_at)}
@@ -202,6 +290,39 @@ const Chat = () => {
       />
     );
   };
+
+
+  const renderInvitationItem = ({ item }: { item: Invitation }) => {
+    const avatarSource = item.room.image_url && item.room.image_url.trim() !== ''
+      ? item.room.image_url
+      : DEFAULT_AVATAR_URL;
+
+    return (
+      <ChatItem
+        id={item.invitation.id.toString()}
+        name={item.room.name}
+        message={`Invitation from ${item.room.name}`}
+        time={formatTime(item.invitation.created_at)}
+        avatar={avatarSource}
+        hasRequest={true}
+        onPress={() => {
+          setSelectedChat({
+            id: item.room.id,
+            name: item.room.name,
+            status: 'pending',
+            type: item.room.type,
+            image_url: item.room.image_url,
+            total_members: item.room.total_members,
+            created_by: item.room.created_by,
+            joined_at: item.room.created_at,
+            latest_message: null,
+          });
+          setShowRequestModal(true);
+        }}
+      />
+    );
+  };
+
 
   if (loading) {
     return (
@@ -222,20 +343,43 @@ const Chat = () => {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : (
-        <FlatList
-          data={chats}
-          renderItem={renderChatItem}
-          keyExtractor={(item) => item.id.toString()}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl 
-              refreshing={refreshing} 
-              onRefresh={handleRefresh}
-              colors={[COLORS.primary]} // Add your app's primary color
-            />
-          }
-          ListEmptyComponent={<EmptyState />}
-        />
+        <>
+          {invitations.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>Invitations</Text>
+              <FlatList
+                data={invitations}
+                renderItem={renderInvitationItem}
+                keyExtractor={(item) => item.room.id.toString()}
+
+                horizontal={true}
+                showsHorizontalScrollIndicator={false}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={handleRefresh}
+                    colors={[COLORS.primary]}
+                  />
+                }
+              />
+            </>
+          )}
+          <Text style={styles.sectionTitle}>Chats</Text>
+          <FlatList
+            data={chats}
+            renderItem={renderChatItem}
+            keyExtractor={(item) => item.id.toString()}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                colors={[COLORS.primary]}
+              />
+            }
+            ListEmptyComponent={<EmptyState />}
+          />
+        </>
       )}
 
       {showRequestModal && selectedChat && (
@@ -273,6 +417,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000'
   },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    marginLeft: 16,
+    color: '#000',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -291,7 +442,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: FONTS.RADIO_CANADA_REGULAR,
     fontSize: SIZES.medium,
+  },
+  invitationItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5E5',
+  },
+  acceptButton: {
+    color: COLORS.primary,
+    fontWeight: 'bold',
+    textDecorationLine: 'underline',
+    marginTop: 10,
   }
+
 });
 
 export default Chat;

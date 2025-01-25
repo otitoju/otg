@@ -2,10 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import {
   API_KEY, 
-  BASE_URL
+//  BASE_URL
 } from '../constants/utils';
 
-// const BASE_URL = 'http://192.168.119.48:5000/api/v1/'
+const BASE_URL = 'http://192.168.0.129:5001/api/v1/'
 
 /**
  * Registers a new user account using the provided payload.
